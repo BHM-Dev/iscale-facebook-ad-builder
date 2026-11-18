@@ -549,8 +549,8 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                         }
                     }}
                     className={`flex-1 p-4 rounded-xl border-2 transition-all ${mode === 'new'
-                        ? 'border-amber-600 bg-amber-50'
-                        : 'border-gray-200 hover:border-amber-300'
+                        ? 'border-gray-900 bg-gray-50'
+                        : 'border-gray-200 hover:border-gray-400'
                         }`}
                 >
                     <Plus className="mx-auto mb-2" size={24} />
@@ -559,8 +559,8 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                 <button
                     onClick={() => setMode('existing')}
                     className={`flex-1 p-4 rounded-xl border-2 transition-all ${mode === 'existing'
-                        ? 'border-amber-600 bg-amber-50'
-                        : 'border-gray-200 hover:border-amber-300'
+                        ? 'border-gray-900 bg-gray-50'
+                        : 'border-gray-200 hover:border-gray-400'
                         }`}
                 >
                     <Check className="mx-auto mb-2" size={24} />
@@ -585,8 +585,8 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                 key={adset.id}
                                 onClick={() => handleSelectExisting(adset)}
                                 className={`p-4 rounded-xl border-2 cursor-pointer transition-all ${selectedAdset?.id === adset.id
-                                    ? 'border-amber-600 bg-amber-50'
-                                    : 'border-gray-200 hover:border-amber-300'
+                                    ? 'border-gray-900 bg-gray-50'
+                                    : 'border-gray-200 hover:border-gray-400'
                                     }`}
                             >
                                 <div className="flex justify-between items-start">
@@ -612,7 +612,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                         </div>
                                     </div>
                                     {selectedAdset?.id === adset.id && (
-                                        <Check className="text-amber-600" size={20} />
+                                        <Check className="text-gray-900" size={20} />
                                     )}
                                 </div>
                             </div>
@@ -635,8 +635,8 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                 type="button"
                                 onClick={() => setAdsetData(prev => ({ ...prev, creationMode: 'single' }))}
                                 className={`text-left p-3 rounded-lg border-2 transition-all ${(adsetData.creationMode || 'single') === 'single'
-                                    ? 'border-amber-600 bg-amber-50'
-                                    : 'border-gray-200 hover:border-amber-300'
+                                    ? 'border-gray-900 bg-gray-50'
+                                    : 'border-gray-200 hover:border-gray-400'
                                     }`}
                             >
                                 <div className="font-semibold text-sm">One ad set for all ads</div>
@@ -646,8 +646,8 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                 type="button"
                                 onClick={() => setAdsetData(prev => ({ ...prev, creationMode: 'per_media' }))}
                                 className={`text-left p-3 rounded-lg border-2 transition-all ${adsetData.creationMode === 'per_media'
-                                    ? 'border-amber-600 bg-amber-50'
-                                    : 'border-gray-200 hover:border-amber-300'
+                                    ? 'border-gray-900 bg-gray-50'
+                                    : 'border-gray-200 hover:border-gray-400'
                                     }`}
                             >
                                 <div className="font-semibold text-sm flex items-center gap-1.5">
@@ -711,7 +711,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
 
                     <div>
                         <label className="block text-sm font-medium text-gray-700 mb-2">Angle *</label>
-                        <input value={adsetData.namingAngle || ''} onChange={event => handleInputChange('namingAngle', event.target.value)} placeholder="Fleet and crew" className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:ring-2 focus:ring-amber-500 focus:border-transparent" />
+                        <input value={adsetData.namingAngle || ''} onChange={event => handleInputChange('namingAngle', event.target.value)} placeholder="Fleet and crew" className="w-full rounded-lg border border-gray-300 px-4 py-2 focus:ring-2 focus:ring-gray-900 focus:border-transparent" />
                     </div>
 
                     <div>
@@ -761,7 +761,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                                 showWarning('Day parting has been disabled — it requires a Lifetime Budget.');
                                             }
                                         }}
-                                        className={`p-3 rounded-lg border-2 transition-all text-left ${adsetData.budgetScheduleType !== 'LIFETIME' ? 'border-amber-600 bg-amber-50' : 'border-gray-200 hover:border-amber-300'}`}
+                                        className={`p-3 rounded-lg border-2 transition-all text-left ${adsetData.budgetScheduleType !== 'LIFETIME' ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-400'}`}
                                     >
                                         <div className="font-semibold text-sm">Daily Budget</div>
                                         <div className="text-xs text-gray-500">Spend up to X per day</div>
@@ -769,7 +769,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                     <button
                                         type="button"
                                         onClick={() => handleInputChange('budgetScheduleType', 'LIFETIME')}
-                                        className={`p-3 rounded-lg border-2 transition-all text-left ${adsetData.budgetScheduleType === 'LIFETIME' ? 'border-amber-600 bg-amber-50' : 'border-gray-200 hover:border-amber-300'}`}
+                                        className={`p-3 rounded-lg border-2 transition-all text-left ${adsetData.budgetScheduleType === 'LIFETIME' ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-400'}`}
                                     >
                                         <div className="font-semibold text-sm">Lifetime Budget</div>
                                         <div className="text-xs text-gray-500">Fixed total + required for day parting</div>
@@ -803,7 +803,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                         placeholder={adsetData.budgetScheduleType === 'LIFETIME' ? '1500' : '50'}
                                         min="1"
                                         step="1"
-                                        className="w-full pl-7 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                        className="w-full pl-7 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                                     />
                                 </div>
                                 {/* Implied daily spend helper for lifetime */}
@@ -842,7 +842,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                         type="datetime-local"
                                         value={adsetData.endTime || ''}
                                         onChange={(e) => handleInputChange('endTime', e.target.value)}
-                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                                     />
                                     <p className="text-xs text-gray-500 mt-1">Required for lifetime budget and day parting. Must be after start date.</p>
                                 </div>
@@ -855,7 +855,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                 <select
                                     value={adsetData.bidStrategy}
                                     onChange={(e) => handleInputChange('bidStrategy', e.target.value)}
-                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                                 >
                                     <option value="">Select bid strategy...</option>
                                     {BID_STRATEGIES.map(strategy => (
@@ -880,7 +880,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                             placeholder="5"
                                             min="1"
                                             step="1"
-                                            className="w-full pl-7 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                            className="w-full pl-7 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                                         />
                                     </div>
                                 </div>
@@ -906,17 +906,17 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                             ) : pixelsError ? (
                                 <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
                                     {pixelsError}
-                                    <button type="button" onClick={fetchPixels} className="ml-2 text-amber-600 hover:underline font-medium">Retry</button>
+                                    <button type="button" onClick={fetchPixels} className="ml-2 text-gray-900 underline-offset-2 hover:underline font-medium">Retry</button>
                                 </div>
                             ) : pixels.length === 0 ? (
                                 <div className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-3">
-                                    No pixels found. Create a pixel in <a href="https://business.facebook.com/events_manager" target="_blank" rel="noopener noreferrer" className="text-amber-600 hover:underline">Meta Events Manager</a> and link it to this ad account.
+                                    No pixels found. Create a pixel in <a href="https://business.facebook.com/events_manager" target="_blank" rel="noopener noreferrer" className="text-gray-900 underline-offset-2 hover:underline">Meta Events Manager</a> and link it to this ad account.
                                 </div>
                             ) : (
                                 <select
                                     value={adsetData.pixelId}
                                     onChange={(e) => handleInputChange('pixelId', e.target.value)}
-                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                                 >
                                     <option value="">Select a pixel...</option>
                                     {pixels.map(pixel => (
@@ -947,7 +947,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                         handleInputChange('adScheduleEnabled', enabling);
                                     }
                                 }}
-                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${adsetData.adScheduleEnabled ? 'bg-amber-600' : 'bg-gray-300'}`}
+                                className={`relative inline-flex h-6 w-11 items-center rounded-full transition-colors ${adsetData.adScheduleEnabled ? 'bg-gray-900' : 'bg-gray-300'}`}
                             >
                                 <span className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${adsetData.adScheduleEnabled ? 'translate-x-6' : 'translate-x-1'}`} />
                             </button>
@@ -999,7 +999,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                                 id={`day-${dayIndex}`}
                                                 checked={isEnabled}
                                                 onChange={toggleDay}
-                                                className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                                                className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
                                             />
                                             <label htmlFor={`day-${dayIndex}`} className="w-24 text-sm font-medium text-gray-700 cursor-pointer">{day}</label>
                                             {isEnabled && (
@@ -1008,14 +1008,14 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                                         type="time"
                                                         value={toTime(startMinute)}
                                                         onChange={(e) => updateTime('startMinute', e.target.value)}
-                                                        className="px-2 py-1 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-amber-500"
+                                                        className="px-2 py-1 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-gray-900"
                                                     />
                                                     <span className="text-xs text-gray-500">to</span>
                                                     <input
                                                         type="time"
                                                         value={toTime(endMinute)}
                                                         onChange={(e) => updateTime('endMinute', e.target.value)}
-                                                        className="px-2 py-1 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-amber-500"
+                                                        className="px-2 py-1 border border-gray-300 rounded text-sm focus:ring-2 focus:ring-gray-900"
                                                     />
                                                 </>
                                             )}
@@ -1049,7 +1049,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                         type="datetime-local"
                                         value={adsetData.startTime}
                                         onChange={(e) => handleInputChange('startTime', e.target.value)}
-                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                                     />
                                     <p className="mt-1 text-xs text-gray-500">
                                         Defaults to the current time, like Meta. Change it only when you want a scheduled launch.
@@ -1063,7 +1063,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                     <select
                                         value={adsetData.optimizationGoal}
                                         onChange={(e) => handleInputChange('optimizationGoal', e.target.value)}
-                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                                     >
                                         <option value="">Select optimization goal...</option>
                                         {OPTIMIZATION_GOALS.map(goal => (
@@ -1093,7 +1093,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                             <select
                                                 value={adsetData.conversionEvent}
                                                 onChange={(e) => handleInputChange('conversionEvent', e.target.value)}
-                                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                                             >
                                                 <option value="">Select event...</option>
                                                 {CONVERSION_EVENTS.map(event => (
@@ -1110,7 +1110,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                             <select
                                                 value={adsetData.attributionSetting}
                                                 onChange={(e) => handleInputChange('attributionSetting', e.target.value)}
-                                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                                             >
                                                 {ATTRIBUTION_SETTINGS.map(setting => (
                                                     <option key={setting.value} value={setting.value}>
@@ -1184,7 +1184,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                                         }
                                                         setLocationMode(e.target.value);
                                                     }}
-                                                    className={`appearance-none pl-3 pr-8 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent text-sm font-medium ${locationMode === 'include'
+                                                    className={`appearance-none pl-3 pr-8 py-2 border rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent text-sm font-medium ${locationMode === 'include'
                                                         ? 'bg-green-50 text-green-700 border-green-200'
                                                         : 'bg-red-50 text-red-700 border-red-200'
                                                         }`}
@@ -1207,7 +1207,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                                     }}
                                                     onFocus={() => setShowCountryDropdown(true)}
                                                     placeholder={`Search locations to ${locationMode}...`}
-                                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                                                 />
 
                                                 {/* Dropdown */}
@@ -1403,7 +1403,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                             value={adsetData.targeting.ageMin}
                                             onChange={(e) => handleTargetingChange('ageMin', parseInt(e.target.value))}
                                             disabled={isHECRestricted}
-                                            className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent ${isHECRestricted ? 'border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed' : 'border-gray-300'}`}
+                                            className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent ${isHECRestricted ? 'border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed' : 'border-gray-300'}`}
                                         >
                                             {Array.from({ length: 48 }, (_, i) => i + 18).map(age => (
                                                 <option key={age} value={age}>{age}{isHECRestricted && age === 18 ? ' (default)' : ''}</option>
@@ -1419,7 +1419,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                             value={adsetData.targeting.ageMax}
                                             onChange={(e) => handleTargetingChange('ageMax', parseInt(e.target.value))}
                                             disabled={isHECRestricted}
-                                            className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent ${isHECRestricted ? 'border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed' : 'border-gray-300'}`}
+                                            className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent ${isHECRestricted ? 'border-gray-200 bg-gray-50 text-gray-400 cursor-not-allowed' : 'border-gray-300'}`}
                                         >
                                             {Array.from({ length: 48 }, (_, i) => i + 18).map(age => (
                                                 <option key={age} value={age}>{age}{isHECRestricted && age === 65 ? '+ (default)' : ''}</option>
@@ -1437,10 +1437,10 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                             onClick={() => !isHECRestricted && handleTargetingChange('genders', [])}
                                             disabled={isHECRestricted}
                                             className={`flex-1 py-2 px-4 rounded-lg border-2 transition-all ${isHECRestricted
-                                                ? 'border-amber-600 bg-amber-50 text-amber-700 font-medium cursor-not-allowed opacity-60'
+                                                ? 'border-gray-900 bg-gray-50 text-gray-900 font-medium cursor-not-allowed opacity-60'
                                                 : !adsetData.targeting.genders || adsetData.targeting.genders.length === 0
-                                                    ? 'border-amber-600 bg-amber-50 text-amber-700 font-medium'
-                                                    : 'border-gray-200 hover:border-amber-300 text-gray-600'
+                                                    ? 'border-gray-900 bg-gray-50 text-gray-900 font-medium'
+                                                    : 'border-gray-200 hover:border-gray-400 text-gray-600'
                                             }`}
                                         >
                                             All
@@ -1451,8 +1451,8 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                             className={`flex-1 py-2 px-4 rounded-lg border-2 transition-all ${isHECRestricted
                                                 ? 'border-gray-100 text-gray-300 cursor-not-allowed'
                                                 : adsetData.targeting.genders?.includes(1)
-                                                    ? 'border-amber-600 bg-amber-50 text-amber-700 font-medium'
-                                                    : 'border-gray-200 hover:border-amber-300 text-gray-600'
+                                                    ? 'border-gray-900 bg-gray-50 text-gray-900 font-medium'
+                                                    : 'border-gray-200 hover:border-gray-400 text-gray-600'
                                             }`}
                                         >
                                             Men
@@ -1463,8 +1463,8 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                             className={`flex-1 py-2 px-4 rounded-lg border-2 transition-all ${isHECRestricted
                                                 ? 'border-gray-100 text-gray-300 cursor-not-allowed'
                                                 : adsetData.targeting.genders?.includes(2)
-                                                    ? 'border-amber-600 bg-amber-50 text-amber-700 font-medium'
-                                                    : 'border-gray-200 hover:border-amber-300 text-gray-600'
+                                                    ? 'border-gray-900 bg-gray-50 text-gray-900 font-medium'
+                                                    : 'border-gray-200 hover:border-gray-400 text-gray-600'
                                             }`}
                                         >
                                             Women
@@ -1481,13 +1481,13 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                         <div
                                             onClick={() => handleTargetingChange('publisher_platforms', [])}
                                             className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${!adsetData.targeting.publisher_platforms || adsetData.targeting.publisher_platforms.length === 0
-                                                ? 'border-amber-600 bg-amber-50'
-                                                : 'border-gray-200 hover:border-amber-300'
+                                                ? 'border-gray-900 bg-gray-50'
+                                                : 'border-gray-200 hover:border-gray-400'
                                                 }`}
                                         >
                                             <div className="flex items-center gap-2 mb-1">
                                                 <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${!adsetData.targeting.publisher_platforms || adsetData.targeting.publisher_platforms.length === 0
-                                                    ? 'border-amber-600 bg-amber-600'
+                                                    ? 'border-gray-900 bg-gray-900'
                                                     : 'border-gray-400'
                                                     }`}>
                                                     {(!adsetData.targeting.publisher_platforms || adsetData.targeting.publisher_platforms.length === 0) && (
@@ -1509,13 +1509,13 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                                 }
                                             }}
                                             className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${adsetData.targeting.publisher_platforms && adsetData.targeting.publisher_platforms.length > 0
-                                                ? 'border-amber-600 bg-amber-50'
-                                                : 'border-gray-200 hover:border-amber-300'
+                                                ? 'border-gray-900 bg-gray-50'
+                                                : 'border-gray-200 hover:border-gray-400'
                                                 }`}
                                         >
                                             <div className="flex items-center gap-2 mb-1">
                                                 <div className={`w-5 h-5 rounded-full border flex items-center justify-center ${adsetData.targeting.publisher_platforms && adsetData.targeting.publisher_platforms.length > 0
-                                                    ? 'border-amber-600 bg-amber-600'
+                                                    ? 'border-gray-900 bg-gray-900'
                                                     : 'border-gray-400'
                                                     }`}>
                                                     {(adsetData.targeting.publisher_platforms && adsetData.targeting.publisher_platforms.length > 0) && (
@@ -1551,7 +1551,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                                                                     }
                                                                     handleTargetingChange('publisher_platforms', updated);
                                                                 }}
-                                                                className="w-4 h-4 text-amber-600 rounded focus:ring-amber-500"
+                                                                className="w-4 h-4 text-gray-900 rounded focus:ring-gray-900"
                                                             />
                                                             <span className="text-gray-700 capitalize">{platform.replace('_', ' ')}</span>
                                                         </label>
@@ -1580,7 +1580,7 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                 <button
                     onClick={handleNext}
                     disabled={loading}
-                    className="flex items-center gap-2 px-6 py-3 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                    className="flex items-center gap-2 px-6 py-3 bg-gray-900 text-white rounded-lg font-medium hover:bg-black disabled:bg-gray-300 disabled:cursor-not-allowed"
                 >
                     {loading ? 'Saving...' : 'Next Step'} <ChevronRight size={20} />
                 </button>

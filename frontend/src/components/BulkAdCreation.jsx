@@ -2534,7 +2534,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         <button
                             type="button"
                             onClick={applyNamingPatternToCurrentAds}
-                            className="px-3 py-1.5 bg-amber-600 text-white rounded-lg text-xs font-semibold hover:bg-amber-700"
+                            className="px-3 py-1.5 bg-gray-900 text-white rounded-lg text-xs font-semibold hover:bg-black"
                         >
                             Rename {adsData.length} ad{adsData.length !== 1 ? 's' : ''} now
                         </button>
@@ -2561,19 +2561,19 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                         <div className="mb-5">
                             <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
                                 <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
-                                    <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">{driveManifestCreatesSeparateAdsets ? 'Selected new ad sets' : 'Selected ads'}</div>
+                                    <div className="text-[11px] font-semibold   text-gray-500">{driveManifestCreatesSeparateAdsets ? 'Selected new ad sets' : 'Selected ads'}</div>
                                     <div className="mt-0.5 text-xl font-bold text-gray-900">{driveManifestCreatesSeparateAdsets ? new Set(activeAds.map(ad => ad.creativeId)).size : activeAds.length} <span className="text-sm font-medium text-gray-500">/ {driveManifestCreatesSeparateAdsets ? new Set(adsData.map(ad => ad.creativeId)).size : adsData.length}</span></div>
                                 </div>
                                 <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
-                                    <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Placement inventory</div>
+                                    <div className="text-[11px] font-semibold   text-gray-500">Placement inventory</div>
                                     <div className="mt-0.5 text-xl font-bold text-gray-900">{driveReviewInventory || '—'}</div>
                                 </div>
                                 <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
-                                    <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Copy ready</div>
+                                    <div className="text-[11px] font-semibold   text-gray-500">Copy ready</div>
                                     <div className={`mt-0.5 text-xl font-bold ${manifestReadyCount === activeAds.length ? 'text-emerald-700' : 'text-amber-700'}`}>{manifestReadyCount} / {activeAds.length}</div>
                                 </div>
                                 <div className="rounded-lg border border-gray-200 bg-white px-3 py-2.5">
-                                    <div className="text-[11px] font-semibold uppercase tracking-wide text-gray-500">Facebook page</div>
+                                    <div className="text-[11px] font-semibold   text-gray-500">Facebook page</div>
                                     <div className="mt-1 truncate text-sm font-semibold text-gray-900">{creativeData.pageName || 'Page not confirmed'}</div>
                                     <div className={`mt-0.5 truncate text-[11px] ${creativeData.instagramId ? 'text-emerald-700' : 'text-amber-700'}`}>
                                         Instagram: {creativeData.instagramId ? `linked (${creativeData.instagramId})` : 'not linked'}
@@ -2588,12 +2588,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                             value={manifestSearch}
                                             onChange={(event) => setManifestSearch(event.target.value)}
                                             placeholder="Search category, creative, ad set, or copy"
-                                            className="min-w-[210px] flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                                            className="min-w-[210px] flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-2 focus:ring-gray-200"
                                         />
                                         <select
                                             value={manifestCategory}
                                             onChange={(event) => setManifestCategory(event.target.value)}
-                                            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                                            className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-gray-900 focus:ring-2 focus:ring-gray-200"
                                         >
                                             <option value="all">All categories</option>
                                             {manifestCategories.map(category => <option key={category} value={category}>{category}</option>)}
@@ -2605,7 +2605,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                             Exclude {visibleManifestRows.length} visible
                                         </button>
                                     </div>
-                                    <div className="hidden grid-cols-[28px_minmax(220px,1.7fr)_minmax(100px,.8fr)_96px_80px] gap-3 bg-gray-50 px-4 py-2.5 text-[10px] font-semibold uppercase tracking-wide text-gray-500 md:grid">
+                                    <div className="hidden grid-cols-[28px_minmax(220px,1.7fr)_minmax(100px,.8fr)_96px_80px] gap-3 bg-gray-50 px-4 py-2.5 text-[10px] font-semibold   text-gray-500 md:grid">
                                         <span />
                                         <span>Ad set / creative</span>
                                         <span>Category</span>
@@ -2634,7 +2634,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                                             setEditDrawerOpen(true);
                                                         }
                                                     }}
-                                                    className={`grid cursor-pointer grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-3 border-t border-gray-100 px-4 py-3 transition-colors md:grid-cols-[28px_minmax(220px,1.7fr)_minmax(100px,.8fr)_96px_80px] ${selected ? 'bg-amber-50 shadow-[inset_3px_0_0_0_#d97706]' : included ? 'hover:bg-gray-50' : 'bg-gray-50 opacity-60'}`}
+                                                    className={`grid cursor-pointer grid-cols-[28px_minmax(0,1fr)_auto] items-center gap-3 border-t border-gray-100 px-4 py-3 transition-colors md:grid-cols-[28px_minmax(220px,1.7fr)_minmax(100px,.8fr)_96px_80px] ${selected ? 'bg-gray-50 shadow-[inset_3px_0_0_0_#171717]' : included ? 'hover:bg-gray-50' : 'bg-gray-50 opacity-60'}`}
                                                 >
                                                     <input
                                                         type="checkbox"
@@ -2642,7 +2642,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                                         onClick={(event) => event.stopPropagation()}
                                                         onChange={() => toggleManifestAd(row.ad.id)}
                                                         aria-label={`Include ${row.ad.name}`}
-                                                        className="h-4 w-4 rounded border-gray-300 text-amber-600 focus:ring-amber-500"
+                                                        className="h-4 w-4 rounded border-gray-300 text-gray-900 focus:ring-gray-900"
                                                     />
                                                     <div className="flex min-w-0 items-center gap-3">
                                                         <div className="flex h-12 w-[58px] shrink-0 gap-0.5 overflow-hidden rounded-md border border-gray-200 bg-gray-100">
@@ -2678,7 +2678,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                                         )}
                                                         {row.outcome && <span className={`mt-1 inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${row.outcome.cls}`}>{row.outcome.label}</span>}
                                                     </div>
-                                                    <button type="button" onClick={(event) => { event.stopPropagation(); setSelectedManifestAdId(row.ad.id); setEditDrawerOpen(true); }} className="text-right text-xs font-semibold text-amber-700 hover:text-amber-900">Open →</button>
+                                                    <button type="button" onClick={(event) => { event.stopPropagation(); setSelectedManifestAdId(row.ad.id); setEditDrawerOpen(true); }} className="text-right text-xs font-semibold text-gray-900 hover:text-black">Open →</button>
                                                 </div>
                                             );
                                         })}
@@ -2696,12 +2696,12 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                 value={manifestSearch}
                                 onChange={(event) => setManifestSearch(event.target.value)}
                                 placeholder="Search ad name, creative, copy, or category"
-                                className="min-w-[220px] flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                                className="min-w-[220px] flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm focus:border-gray-900 focus:ring-2 focus:ring-gray-200"
                             />
                             <select
                                 value={manifestCategory}
                                 onChange={(event) => setManifestCategory(event.target.value)}
-                                className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                                className="rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm focus:border-gray-900 focus:ring-2 focus:ring-gray-200"
                             >
                                 <option value="all">All categories</option>
                                 {manifestCategories.map(category => <option key={category} value={category}>{category}</option>)}
@@ -2930,7 +2930,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                             <div className="flex items-center justify-between gap-2 px-3 py-2 bg-gray-50 border-t border-gray-200">
                                                 <div className="min-w-0">
                                                     {websiteUrl && (
-                                                        <div className="text-[11px] uppercase text-gray-400 truncate">{displayDomain(websiteUrl)}</div>
+                                                        <div className="text-[11px]  text-gray-400 truncate">{displayDomain(websiteUrl)}</div>
                                                     )}
                                             <div className="text-sm font-semibold text-gray-900 truncate">{headline || '—'}</div>
                                             {description && <div className="text-[11px] text-gray-500 truncate">{description}</div>}
@@ -3212,7 +3212,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                 )}
                                 <div className="mt-5 flex gap-3">
                                     <button type="button" onClick={() => setShowReconciliationConfirm(false)} className="flex-1 rounded-lg border border-gray-200 px-4 py-2.5 font-medium text-gray-700 hover:bg-gray-50">Cancel</button>
-                                        <button type="button" onClick={clearReconciliationBlock} className="flex-1 rounded-lg bg-amber-600 px-4 py-2.5 font-semibold text-white hover:bg-amber-700">Reset and exclude rows</button>
+                                        <button type="button" onClick={clearReconciliationBlock} className="flex-1 rounded-lg bg-red-600 px-4 py-2.5 font-semibold text-white hover:bg-red-700">Reset and exclude rows</button>
                                 </div>
                             </div>
                         </div>
@@ -3335,11 +3335,11 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                         creative={selectedManifestRow.creative}
                                     />
                                     <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs leading-5 text-blue-800">This copy belongs only to this ad. A Meta description is optional.</p>
-                                    <label className="block text-xs font-semibold text-gray-700">Primary text *<textarea rows="4" value={selectedManifestRow.body} onChange={(event) => updateManifestField(selectedManifestRow, 'body', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
-                                    <label className="block text-xs font-semibold text-gray-700">Headline *<input value={selectedManifestRow.headline} onChange={(event) => updateManifestField(selectedManifestRow, 'headline', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
-                                    <label className="block text-xs font-semibold text-gray-700">Description <span className="font-normal text-gray-400">(optional)</span><input value={selectedManifestRow.description} onChange={(event) => updateManifestField(selectedManifestRow, 'description', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100" /></label>
+                                    <label className="block text-xs font-semibold text-gray-700">Primary text *<textarea rows="4" value={selectedManifestRow.body} onChange={(event) => updateManifestField(selectedManifestRow, 'body', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-gray-900 focus:ring-2 focus:ring-gray-200" /></label>
+                                    <label className="block text-xs font-semibold text-gray-700">Headline *<input value={selectedManifestRow.headline} onChange={(event) => updateManifestField(selectedManifestRow, 'headline', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-gray-900 focus:ring-2 focus:ring-gray-200" /></label>
+                                    <label className="block text-xs font-semibold text-gray-700">Description <span className="font-normal text-gray-400">(optional)</span><input value={selectedManifestRow.description} onChange={(event) => updateManifestField(selectedManifestRow, 'description', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 px-3 py-2 text-sm font-normal focus:border-gray-900 focus:ring-2 focus:ring-gray-200" /></label>
                                     <p className="rounded-lg bg-gray-50 px-3 py-2 text-xs leading-5 text-gray-600">Destination URL is set once in Ad Creative and applies to every ad in this launch.</p>
-                                    <label className="block text-xs font-semibold text-gray-700">Meta CTA * <span className="font-normal text-gray-400">({selectedManifestRow.ctaSource})</span><select value={selectedManifestRow.cta} onChange={(event) => updateManifestField(selectedManifestRow, 'cta', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100"><option value="">Select a CTA...</option>{[...META_CTA_OPTIONS].map(cta => <option key={cta} value={cta}>{formatCtaLabel(cta)}</option>)}</select></label>
+                                    <label className="block text-xs font-semibold text-gray-700">Meta CTA * <span className="font-normal text-gray-400">({selectedManifestRow.ctaSource})</span><select value={selectedManifestRow.cta} onChange={(event) => updateManifestField(selectedManifestRow, 'cta', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-normal focus:border-gray-900 focus:ring-2 focus:ring-gray-200"><option value="">Select a CTA...</option>{[...META_CTA_OPTIONS].map(cta => <option key={cta} value={cta}>{formatCtaLabel(cta)}</option>)}</select></label>
                                     <label className="block text-xs font-semibold text-gray-700">Ad name<div className="mt-1 font-normal"><NamingTemplateField value={selectedManifestRow.ad.name} onManualChange={value => updateManifestField(selectedManifestRow, 'name', value)} tokens={{ ...adNamingTokens, seq: Math.max(1, (creativeData.creatives.findIndex(item => item.id === selectedManifestRow.ad.creativeId) + 1)), concept: conceptFromFilename(selectedManifestRow.creative?.name) || `Creative${selectedManifestRow.index + 1}`, media: mediaToken(selectedManifestRow.creative || { mediaType: selectedManifestRow.ad.mediaType }), ratio: ratioToken(selectedManifestRow.creative || { format: selectedManifestRow.ad.format }) }} scope="ad" preset={naming.preset} template={adNamingPattern} manuallyEdited={selectedManifestRow.ad.nameManuallyEdited} onOpenNaming={() => setNamingOpen(true)} onUseTemplate={() => setAdsData(previous => ensureUniqueAdNames(previous.map(item => item.id === selectedManifestRow.ad.id ? { ...item, name: computeAdName(adNamingPattern, item), nameManuallyEdited: false } : item)))} /></div></label>
                                 </div>
                                 <div className="border-t border-gray-200 p-4">

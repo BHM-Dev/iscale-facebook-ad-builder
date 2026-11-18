@@ -5,7 +5,7 @@ import { useCampaign, createDefaultCampaignData, createDefaultAdsetData } from '
 import { getAdAccounts } from '../lib/facebookApi';
 import { safeLocalStorageGet, safeLocalStorageSet } from '../lib/safeLocalStorage';
 
-const AdAccountStep = ({ onNext, targetAccountId = null }) => {
+const AdAccountStep = ({ onNext, targetAccountId = null, onAccountsLoaded = null }) => {
     const { showWarning } = useToast();
     const { selectedAdAccount, setSelectedAdAccount, setCampaignData, setAdsetData } = useCampaign();
     const [adAccounts, setAdAccounts] = useState([]);
@@ -50,6 +50,8 @@ const AdAccountStep = ({ onNext, targetAccountId = null }) => {
                 setSelectedAdAccount(accounts[0]);
                 setSearchQuery(accounts[0].name);
             }
+            // Lets the wizard skip this step only for an account confirmed against the live list.
+            onAccountsLoaded?.(accounts);
         } catch (error) {
             console.error('Error fetching ad accounts:', error);
             setAccountsError(error.message);
@@ -129,7 +131,7 @@ const AdAccountStep = ({ onNext, targetAccountId = null }) => {
                         Error loading ad accounts: {accountsError}
                         <button
                             onClick={fetchAdAccounts}
-                            className="ml-2 text-amber-600 hover:underline"
+                            className="ml-2 text-gray-900 underline-offset-2 hover:underline"
                         >
                             Retry
                         </button>
@@ -154,7 +156,7 @@ const AdAccountStep = ({ onNext, targetAccountId = null }) => {
                                 }
                             }}
                             placeholder="Search ad accounts by name or ID..."
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                         />
 
                         {showDropdown && filteredAccounts.length > 0 && (
@@ -163,7 +165,7 @@ const AdAccountStep = ({ onNext, targetAccountId = null }) => {
                                     <div
                                         key={account.id}
                                         onClick={() => handleAccountSelect(account)}
-                                        className={`px-4 py-3 cursor-pointer hover:bg-amber-50 border-b border-gray-100 last:border-b-0 ${selectedAdAccount?.id === account.id ? 'bg-amber-50' : ''
+                                        className={`px-4 py-3 cursor-pointer hover:bg-gray-50 border-b border-gray-100 last:border-b-0 ${selectedAdAccount?.id === account.id ? 'bg-gray-100' : ''
                                             }`}
                                     >
                                         <div className="font-medium text-gray-900">{account.name}</div>
@@ -188,9 +190,9 @@ const AdAccountStep = ({ onNext, targetAccountId = null }) => {
             {selectedAdAccount && !showDropdown && (
                 <div className="mt-6 bg-white border border-gray-200 rounded-lg shadow-sm overflow-hidden">
                     {/* Header */}
-                    <div className="bg-gradient-to-r from-amber-100 to-orange-100 p-4 border-b border-amber-200">
-                        <h3 className="text-lg font-bold text-amber-900">{selectedAdAccount.name}</h3>
-                        <div className="flex items-center gap-4 mt-2 text-amber-700 text-sm">
+                    <div className="bg-gray-50 p-4 border-b border-gray-200">
+                        <h3 className="text-lg font-bold text-gray-900">{selectedAdAccount.name}</h3>
+                        <div className="flex items-center gap-4 mt-2 text-gray-600 text-sm">
                             <span>ID: {selectedAdAccount.accountId}</span>
                             <span>•</span>
                             <span className={`px-2 py-0.5 rounded text-xs font-medium ${selectedAdAccount.status === 1 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'
@@ -239,7 +241,7 @@ const AdAccountStep = ({ onNext, targetAccountId = null }) => {
                 <button
                     onClick={handleNext}
                     disabled={!selectedAdAccount}
-                    className="flex items-center gap-2 px-6 py-3 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                    className="flex items-center gap-2 px-6 py-3 bg-gray-900 text-white rounded-lg font-medium hover:bg-black disabled:bg-gray-300 disabled:cursor-not-allowed"
                 >
                     Next Step <ChevronRight size={20} />
                 </button>

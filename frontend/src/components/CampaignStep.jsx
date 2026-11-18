@@ -283,8 +283,8 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession 
                         }
                     }}
                     className={`flex-1 p-4 rounded-xl border-2 transition-all ${mode === 'new'
-                        ? 'border-amber-600 bg-amber-50'
-                        : 'border-gray-200 hover:border-amber-300'
+                        ? 'border-gray-900 bg-gray-50'
+                        : 'border-gray-200 hover:border-gray-400'
                         }`}
                 >
                     <Plus className="mx-auto mb-2" size={24} />
@@ -293,8 +293,8 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession 
                 <button
                     onClick={() => setMode('existing')}
                     className={`flex-1 p-4 rounded-xl border-2 transition-all ${mode === 'existing'
-                        ? 'border-amber-600 bg-amber-50'
-                        : 'border-gray-200 hover:border-amber-300'
+                        ? 'border-gray-900 bg-gray-50'
+                        : 'border-gray-200 hover:border-gray-400'
                         }`}
                 >
                     <Check className="mx-auto mb-2" size={24} />
@@ -325,7 +325,7 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession 
                                     onChange={(e) => setCampaignSearch(e.target.value)}
                                     placeholder="Search campaigns by name or status..."
                                     aria-label="Search campaigns"
-                                    className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm focus:border-amber-500 focus:outline-none focus:ring-1 focus:ring-amber-500"
+                                    className="w-full rounded-lg border border-gray-200 py-2 pl-9 pr-3 text-sm focus:border-gray-900 focus:outline-none focus:ring-1 focus:ring-gray-900"
                                 />
                                 {searchTerms.length > 0 && (
                                     <div className="mt-1 text-xs text-gray-500">{visibleCampaigns.length} of {existingCampaigns.length} campaigns</div>
@@ -339,8 +339,8 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession 
                                     key={campaign.id}
                                     onClick={() => handleSelectExisting(campaign)}
                                     className={`p-4 rounded-xl border-2 cursor-pointer transition-all mb-2 ${selectedCampaign?.id === campaign.id
-                                        ? 'border-amber-600 bg-amber-50'
-                                        : 'border-gray-200 hover:border-amber-300'
+                                        ? 'border-gray-900 bg-gray-50'
+                                        : 'border-gray-200 hover:border-gray-400'
                                         }`}
                                 >
                                     <div className="flex justify-between items-start">
@@ -369,7 +369,7 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession 
                                             </div>
                                         </div>
                                         {selectedCampaign?.id === campaign.id && (
-                                            <Check className="text-amber-600" size={20} />
+                                            <Check className="text-gray-900" size={20} />
                                         )}
                                     </div>
                                 </div>
@@ -385,13 +385,13 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession 
                 <div className="space-y-4">
                     <div className="grid gap-4 sm:grid-cols-2">
                         <label className="block text-sm font-medium text-gray-700">Wave
-                            <select value={campaignData.namingWave || selectedWave?.wave || ''} onChange={event => { handleInputChange('namingWave', event.target.value); naming.rememberWave(event.target.value); }} className="mt-2 w-full rounded-lg border border-gray-300 px-4 py-2 focus:ring-2 focus:ring-amber-500">
+                            <select value={campaignData.namingWave || selectedWave?.wave || ''} onChange={event => { handleInputChange('namingWave', event.target.value); naming.rememberWave(event.target.value); }} className="mt-2 w-full rounded-lg border border-gray-300 px-4 py-2 focus:ring-2 focus:ring-gray-900">
                                 <option value="">{naming.preset.waves.length ? 'Pick wave…' : 'Set up waves in Naming'}</option>
                                 {naming.preset.waves.map(row => <option key={`${row.code}-${row.wave}`} value={row.wave || ''}>{row.wave || row.code} ({row.code})</option>)}
                             </select>
                         </label>
                         <label className="block text-sm font-medium text-gray-700">Niche
-                            <select value={campaignData.namingNiche || selectedNiche?.niche || ''} onChange={event => handleInputChange('namingNiche', event.target.value)} className="mt-2 w-full rounded-lg border border-gray-300 px-4 py-2 focus:ring-2 focus:ring-amber-500">
+                            <select value={campaignData.namingNiche || selectedNiche?.niche || ''} onChange={event => handleInputChange('namingNiche', event.target.value)} className="mt-2 w-full rounded-lg border border-gray-300 px-4 py-2 focus:ring-2 focus:ring-gray-900">
                                 <option value="">{naming.preset.niche_codes.length ? 'Pick niche…' : 'Set up niches in Naming'}</option>
                                 {naming.preset.niche_codes.map(row => <option key={`${row.code}-${row.niche}`} value={row.niche || ''}>{row.niche || row.code} ({row.code})</option>)}
                             </select>
@@ -424,7 +424,7 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession 
                         <select
                             value={campaignData.objective}
                             onChange={(e) => handleInputChange('objective', e.target.value)}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                         >
                             <option value="">Select objective...</option>
                             {CAMPAIGN_OBJECTIVES.map(obj => (
@@ -462,12 +462,12 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession 
                                             handleInputChange('specialAdCategories', updated);
                                         }}
                                         className={`p-3 rounded-lg border-2 text-left transition-all ${selected
-                                            ? 'border-amber-600 bg-amber-50'
-                                            : 'border-gray-200 hover:border-amber-300'
+                                            ? 'border-gray-900 bg-gray-50'
+                                            : 'border-gray-200 hover:border-gray-400'
                                         }`}
                                     >
                                         <div className="flex items-center gap-2">
-                                            <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${selected ? 'border-amber-600 bg-amber-600' : 'border-gray-300'}`}>
+                                            <div className={`w-4 h-4 rounded border-2 flex items-center justify-center flex-shrink-0 ${selected ? 'border-gray-900 bg-gray-900' : 'border-gray-300'}`}>
                                                 {selected && <Check size={10} className="text-white" />}
                                             </div>
                                             <div>
@@ -495,8 +495,8 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession 
                                 type="button"
                                 onClick={() => handleInputChange('budgetType', 'ABO')}
                                 className={`p-3 rounded-lg border-2 transition-all ${campaignData.budgetType === 'ABO'
-                                    ? 'border-amber-600 bg-amber-50'
-                                    : 'border-gray-200 hover:border-amber-300'
+                                    ? 'border-gray-900 bg-gray-50'
+                                    : 'border-gray-200 hover:border-gray-400'
                                     }`}
                             >
                                 <div className="font-semibold">ABO</div>
@@ -506,8 +506,8 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession 
                                 type="button"
                                 onClick={() => handleInputChange('budgetType', 'CBO')}
                                 className={`p-3 rounded-lg border-2 transition-all ${campaignData.budgetType === 'CBO'
-                                    ? 'border-amber-600 bg-amber-50'
-                                    : 'border-gray-200 hover:border-amber-300'
+                                    ? 'border-gray-900 bg-gray-50'
+                                    : 'border-gray-200 hover:border-gray-400'
                                     }`}
                             >
                                 <div className="font-semibold">CBO</div>
@@ -527,7 +527,7 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession 
                                     <button
                                         type="button"
                                         onClick={() => handleInputChange('budgetScheduleType', 'DAILY')}
-                                        className={`p-3 rounded-lg border-2 transition-all text-left ${campaignData.budgetScheduleType !== 'LIFETIME' ? 'border-amber-600 bg-amber-50' : 'border-gray-200 hover:border-amber-300'}`}
+                                        className={`p-3 rounded-lg border-2 transition-all text-left ${campaignData.budgetScheduleType !== 'LIFETIME' ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-400'}`}
                                     >
                                         <div className="font-semibold text-sm">Daily Budget</div>
                                         <div className="text-xs text-gray-500">Spend up to X per day</div>
@@ -535,7 +535,7 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession 
                                     <button
                                         type="button"
                                         onClick={() => handleInputChange('budgetScheduleType', 'LIFETIME')}
-                                        className={`p-3 rounded-lg border-2 transition-all text-left ${campaignData.budgetScheduleType === 'LIFETIME' ? 'border-amber-600 bg-amber-50' : 'border-gray-200 hover:border-amber-300'}`}
+                                        className={`p-3 rounded-lg border-2 transition-all text-left ${campaignData.budgetScheduleType === 'LIFETIME' ? 'border-gray-900 bg-gray-50' : 'border-gray-200 hover:border-gray-400'}`}
                                     >
                                         <div className="font-semibold text-sm">Lifetime Budget</div>
                                         <div className="text-xs text-gray-500">Fixed total for entire flight</div>
@@ -569,7 +569,7 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession 
                                         placeholder={campaignData.budgetScheduleType === 'LIFETIME' ? '3000' : '100'}
                                         min="1"
                                         step="1"
-                                        className="w-full pl-7 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                        className="w-full pl-7 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                                     />
                                 </div>
                                 {/* Implied daily spend helper for lifetime */}
@@ -608,7 +608,7 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession 
                                         type="datetime-local"
                                         value={campaignData.endTime || ''}
                                         onChange={(e) => handleInputChange('endTime', e.target.value)}
-                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                                     />
                                     <p className="text-xs text-gray-500 mt-1">Required for lifetime budget. Must be a future date.</p>
                                 </div>
@@ -621,7 +621,7 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession 
                                 <select
                                     value={campaignData.bidStrategy}
                                     onChange={(e) => handleInputChange('bidStrategy', e.target.value)}
-                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                    className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                                 >
                                     <option value="">Select bid strategy...</option>
                                     {BID_STRATEGIES.map(strategy => (
@@ -647,7 +647,7 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession 
                                             placeholder="10.00"
                                             min="0.01"
                                             step="0.01"
-                                            className="w-full pl-7 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                                            className="w-full pl-7 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                                         />
                                     </div>
                                     <p className="text-xs text-gray-500 mt-1">
@@ -676,7 +676,7 @@ const CampaignStep = ({ onNext, onBack, forceExistingMode = false, freshSession 
                 <button
                     onClick={handleNext}
                     disabled={loading}
-                    className="ml-auto flex items-center gap-2 px-6 py-3 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                    className="ml-auto flex items-center gap-2 px-6 py-3 bg-gray-900 text-white rounded-lg font-medium hover:bg-black disabled:bg-gray-300 disabled:cursor-not-allowed"
                 >
                     {loading ? 'Saving...' : 'Next Step'} <ChevronRight size={20} />
                 </button>

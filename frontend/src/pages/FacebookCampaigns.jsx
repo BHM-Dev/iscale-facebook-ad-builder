@@ -10,8 +10,10 @@ import AdSetStep from '../components/AdSetStep';
 import AdCreativeStep from '../components/AdCreativeStep';
 import BulkAdCreation from '../components/BulkAdCreation';
 import BulkMatchImport from '../components/BulkMatchImport';
-import { safeSessionStorageGet, safeSessionStorageRemove, safeSessionStorageSet } from '../lib/safeLocalStorage';
+import { safeLocalStorageGet, safeLocalStorageSet, safeSessionStorageGet, safeSessionStorageRemove, safeSessionStorageSet } from '../lib/safeLocalStorage';
 import { LAUNCH_RECEIPT_SESSION_KEY, WIZARD_DRAFT_SESSION_KEY, hasSavedLaunchDraft } from '../lib/launchDraft';
+
+const LAUNCHER_ACCOUNT_KEY = 'launcherConfirmedAccountId';
 
 // How long Quick Ad's auto-advance chain (Account → Campaign → Ad Set) is given to
 // fully resolve before giving up and letting Joel proceed manually from wherever it
@@ -50,14 +52,14 @@ const BatchModeToggle = ({ batchMode, setBatchMode }) => (
         <div className="inline-flex bg-gray-100 rounded-lg p-1">
             <button
                 onClick={() => setBatchMode('combinations')}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${batchMode === 'combinations' ? 'bg-white shadow-sm text-amber-600' : 'text-gray-500 hover:text-gray-700'
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${batchMode === 'combinations' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
                     }`}
             >
                 Generate All Combinations
             </button>
             <button
                 onClick={() => setBatchMode('match-import')}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${batchMode === 'match-import' ? 'bg-white shadow-sm text-amber-600' : 'text-gray-500 hover:text-gray-700'
+                className={`px-4 py-2 rounded-md text-sm font-medium transition-colors ${batchMode === 'match-import' ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
                     }`}
             >
                 Match by Naming Convention
@@ -91,7 +93,7 @@ const LaunchSummaryPanel = ({ currentStep, batchMode, selectedAdAccount, campaig
                 type="button"
                 onClick={onToggle}
                 aria-expanded={isExpanded}
-                className={`flex w-full items-center rounded-md py-1 text-left hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-amber-500 ${isExpanded ? 'justify-between px-1 gap-3' : 'justify-center px-0'}`}
+                className={`flex w-full items-center rounded-md py-1 text-left hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-gray-900 ${isExpanded ? 'justify-between px-1 gap-3' : 'justify-center px-0'}`}
                 title={isExpanded ? 'Collapse Launch Plan' : 'Expand Launch Plan'}
             >
                 {isExpanded && <span className="text-xs font-semibold text-gray-400">Launch Plan</span>}
@@ -126,7 +128,7 @@ const LaunchSummaryPanel = ({ currentStep, batchMode, selectedAdAccount, campaig
                 </div>
                 <div className="flex items-baseline justify-between gap-3 text-sm py-1.5">
                     <span className="text-gray-700 font-semibold">Total ads</span>
-                    <span className="text-right font-bold text-amber-700">{launchSummary.totalAds ?? '—'}</span>
+                    <span className="text-right font-bold text-gray-900">{launchSummary.totalAds ?? '—'}</span>
                 </div>
                 {launchSummary.excludedCount > 0 && (
                     <div className="flex items-baseline justify-between gap-3 text-sm py-1">
@@ -498,6 +500,30 @@ const FacebookCampaignWizardInner = () => {
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [driveLaunchActive, driveRelaunchTarget, currentStep, selectedAdAccount, campaignData, adsetData]);
 
+    // "Chunky flow" (Joel, 2026-11-18): the launcher opened on a full page whose only job was confirming the
+    // account he used last time. When a fresh wizard restores that remembered account, go straight to Campaign;
+    // the account stays named in the header breadcrumb and the step list, one click from changing it.
+    // Runs at most once per visit (a ref, not state), so Back to Account never bounces forward again, and
+    // only for the account last confirmed in this wizard: a first-time default still asks.
+    // Quick Ad, Launch Pack and Drive launches own their own advancing and are left alone.
+    const accountAutoSkipDone = useRef(currentStep !== 1 || furthestStepReached > 1 || pendingLaunchIntent);
+    // Ids from the live account list (set by AdAccountStep once it loads). Until then the account may be a
+    // restored draft's copy that was revoked since, so no skip.
+    const [liveAccountIds, setLiveAccountIds] = useState(null);
+    useEffect(() => {
+        if (accountAutoSkipDone.current) return;
+        if (currentStep !== 1 || driveLaunchActive || quickAdTarget) {
+            accountAutoSkipDone.current = true;
+            return;
+        }
+        if (!selectedAdAccount?.id || !liveAccountIds) return;
+        accountAutoSkipDone.current = true;
+        if (!liveAccountIds.has(selectedAdAccount.id)) return;
+        if (safeLocalStorageGet(LAUNCHER_ACCOUNT_KEY) !== selectedAdAccount.id) return;   // only an account confirmed here before
+        if (selectedAdAccount.status != null && selectedAdAccount.status !== 1) return;     // disabled account: let him see it
+        setCurrentStep(2);
+    }, [currentStep, selectedAdAccount?.id, selectedAdAccount?.status, liveAccountIds, driveLaunchActive, quickAdTarget]);
+
     const steps = [
         { id: 1, label: 'Account', icon: CreditCard, description: 'Choose which Meta ad account to build in.' },
         { id: 2, label: 'Campaign', icon: Target, description: 'Pick an existing campaign or create a new one.' },
@@ -515,6 +541,10 @@ const FacebookCampaignWizardInner = () => {
     const handleNext = () => {
         if (quickAdTarget) stopQuickAd(null);
         if (driveLaunchActive) stopDriveLaunch(null);
+        // The account someone confirmed in this wizard, kept apart from lastSelectedAdAccountId (Campaign
+        // Performance and Create Ads write that one too, so viewing another account must not change where
+        // the next launch goes).
+        if (currentStep === 1 && selectedAdAccount?.id) safeLocalStorageSet(LAUNCHER_ACCOUNT_KEY, selectedAdAccount.id);
         if (currentStep < steps.length) {
             setCurrentStep(currentStep + 1);
         }
@@ -624,7 +654,7 @@ const FacebookCampaignWizardInner = () => {
                 (isCompleted), and clicking one jumps back via the existing goToStep. */}
             <div>
                 <h1 className="text-3xl font-bold text-gray-900 mb-2 flex items-center gap-3">
-                    <Megaphone size={32} className="text-amber-600" />
+                    <Megaphone size={32} className="text-gray-900" />
                     Launch Ads
                 </h1>
                 {(selectedAdAccount || campaignData?.name || adsetData?.name) && currentStep > 1 ? (
@@ -633,7 +663,7 @@ const FacebookCampaignWizardInner = () => {
                             <button
                                 type="button"
                                 onClick={() => goToStep(1)}
-                                className="rounded-md px-1.5 py-0.5 font-medium text-gray-700 hover:bg-amber-50 hover:text-amber-800 transition-colors"
+                                className="rounded-md px-1.5 py-0.5 font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors"
                             >
                                 {selectedAdAccount.name}
                             </button>
@@ -644,7 +674,7 @@ const FacebookCampaignWizardInner = () => {
                                 <button
                                     type="button"
                                     onClick={() => goToStep(2)}
-                                    className="rounded-md px-1.5 py-0.5 font-medium text-gray-700 hover:bg-amber-50 hover:text-amber-800 transition-colors"
+                                    className="rounded-md px-1.5 py-0.5 font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors"
                                 >
                                     {campaignData.name}
                                 </button>
@@ -656,7 +686,7 @@ const FacebookCampaignWizardInner = () => {
                                 <button
                                     type="button"
                                     onClick={() => goToStep(3)}
-                                    className="rounded-md px-1.5 py-0.5 font-medium text-gray-700 hover:bg-amber-50 hover:text-amber-800 transition-colors"
+                                    className="rounded-md px-1.5 py-0.5 font-medium text-gray-700 hover:bg-gray-100 hover:text-gray-900 transition-colors"
                                 >
                                     {adsetData.name}
                                 </button>
@@ -721,7 +751,7 @@ const FacebookCampaignWizardInner = () => {
                         </p>
                     )}
                     <div className="mt-2 flex gap-2">
-                        <button type="button" onClick={dismissRestoredDraft} className="rounded-md bg-amber-600 px-3 py-1 text-xs font-semibold text-white hover:bg-amber-700">Keep draft</button>
+                        <button type="button" onClick={dismissRestoredDraft} className="rounded-md bg-gray-900 px-3 py-1 text-xs font-semibold text-white hover:bg-black">Keep draft</button>
                         <button
                             type="button"
                             onClick={() => {
@@ -842,17 +872,17 @@ const FacebookCampaignWizardInner = () => {
                                                     ? `Edit ${step.label} — your current selections stay saved`
                                                     : undefined}
                                             aria-label={isVisited && !isCurrent ? `Edit ${step.label}; current selections stay saved` : step.label}
-                                            className={`w-full flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${isCurrent ? 'bg-amber-50 border border-amber-200' : isVisited ? 'hover:bg-gray-50 cursor-pointer' : 'cursor-default'}`}
+                                            className={`w-full flex items-start gap-2.5 rounded-lg px-2.5 py-2 text-left transition-colors ${isCurrent ? 'bg-gray-100 border border-gray-200' : isVisited ? 'hover:bg-gray-50 cursor-pointer' : 'cursor-default'}`}
                                         >
-                                            <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${isVisited ? 'bg-amber-600 text-white' : 'bg-gray-100 text-gray-400'}`}>
+                                            <span className={`mt-0.5 flex h-6 w-6 shrink-0 items-center justify-center rounded-full ${isVisited ? 'bg-gray-900 text-white' : 'bg-gray-100 text-gray-400'}`}>
                                                 {isVisited && !isCurrent ? <Check size={14} /> : <step.icon size={13} />}
                                             </span>
                                             <span className="min-w-0">
-                                                <span className={`block text-sm font-medium ${isCurrent ? 'text-amber-900' : isVisited ? 'text-gray-700' : 'text-gray-400'}`}>
+                                                <span className={`block text-sm font-medium ${isCurrent ? 'text-gray-900' : isVisited ? 'text-gray-700' : 'text-gray-400'}`}>
                                                     {step.label}
                                                 </span>
                                                 {isCurrent && (
-                                                    <span className="block text-xs text-amber-700 mt-0.5">{step.description}</span>
+                                                    <span className="block text-xs text-gray-600 mt-0.5">{step.description}</span>
                                                 )}
                                             </span>
                                         </button>
@@ -887,7 +917,7 @@ const FacebookCampaignWizardInner = () => {
                     <div className="flex justify-between items-center relative">
                         <div className="absolute top-1/2 left-0 w-full h-1 bg-gray-100 -z-10 rounded-full" />
                         <div
-                            className="absolute top-1/2 left-0 h-1 bg-amber-600 -z-10 rounded-full transition-all duration-500 ease-in-out"
+                            className="absolute top-1/2 left-0 h-1 bg-gray-900 -z-10 rounded-full transition-all duration-500 ease-in-out"
                             style={{ width: `${((currentStep - 1) / (steps.length - 1)) * 100}%` }}
                         />
                         {steps.map((step) => {
@@ -903,7 +933,7 @@ const FacebookCampaignWizardInner = () => {
                                 >
                                     <div
                                         className={`w-10 h-10 rounded-full flex items-center justify-center transition-all duration-300 ${isVisited
-                                            ? 'bg-amber-600 text-white shadow-md scale-110'
+                                            ? 'bg-gray-900 text-white shadow-md scale-110'
                                             : 'bg-gray-100 text-gray-400'
                                             } ${isVisited && !isCurrent ? 'hover:scale-125' : ''}`}
                                         >
@@ -914,7 +944,7 @@ const FacebookCampaignWizardInner = () => {
                                         )}
                                     </div>
                                     <span
-                                        className={`text-sm font-medium transition-colors duration-300 ${isCurrent ? 'text-amber-900' : 'text-gray-500'
+                                        className={`text-sm font-medium transition-colors duration-300 ${isCurrent ? 'text-gray-900' : 'text-gray-500'
                                             }`}
                                     >
                                         {step.label}
@@ -928,6 +958,15 @@ const FacebookCampaignWizardInner = () => {
                 {/* Center: current workspace — unchanged step components, just wrapped */}
                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
                 {/* Step Content */}
+                {currentStep > 1 && currentStep < 6 && selectedAdAccount && (
+                    <div className="-mt-1 mb-5 flex flex-wrap items-center justify-between gap-2 rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm">
+                        <span className="text-gray-600">
+                            Launching into <span className="font-semibold text-gray-900">{selectedAdAccount.name}</span>
+                            <span className="ml-1.5 text-xs text-gray-500">{selectedAdAccount.accountId ? `act_${String(selectedAdAccount.accountId).replace(/^act_/, '')}` : selectedAdAccount.id}</span>
+                        </span>
+                        <button type="button" onClick={() => goToStep(1)} className="text-sm font-semibold text-gray-900 underline-offset-2 hover:underline">Change account</button>
+                    </div>
+                )}
                 <div className="min-h-[400px]">
                     {currentStep === 1 && (
                         <AdAccountStep
@@ -935,6 +974,7 @@ const FacebookCampaignWizardInner = () => {
                             onAccountSelect={(id) => setFormData({ ...formData, adAccountId: id })}
                             onNext={handleNext}
                             targetAccountId={driveRelaunchTarget?.account_id || null}
+                            onAccountsLoaded={accounts => setLiveAccountIds(new Set(accounts.map(account => account.id)))}
                         />
                     )}
                     {currentStep === 2 && (
@@ -1021,7 +1061,7 @@ const FacebookCampaignWizardInner = () => {
                                 {receiptCreatedAt && <p className="mt-4 border-t border-gray-100 pt-4 text-xs text-gray-500">Created {receiptCreatedAt} · Requested delivery states were sent to Meta; verify effective campaign, ad-set, and ad status in Ads Manager.</p>}
                                 {(receiptPageName || receiptDestinationUrl) && <div className="mt-4 grid gap-3 border-t border-gray-100 pt-4 text-xs sm:grid-cols-2"><div><p className="font-semibold text-gray-400">Facebook Page</p><p className="mt-1 break-words font-medium text-gray-800">{receiptPageName || 'Not recorded'}{launchReceipt?.pageId && launchReceipt.pageId !== receiptPageName ? ` · ${launchReceipt.pageId}` : ''}</p></div><div><p className="font-semibold text-gray-400">Destination URL</p><p className="mt-1 break-all font-medium text-gray-800">{receiptDestinationUrl || 'Not recorded'}</p></div></div>}
                                 <div className="mt-4 border-t border-gray-100 pt-4">
-                                    <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold text-gray-400">Ad sets to verify</p><button type="button" onClick={copyLaunchReceipt} className="text-xs font-semibold text-amber-700 hover:text-amber-900">Copy full receipt</button></div>
+                                    <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold text-gray-400">Ad sets to verify</p><button type="button" onClick={copyLaunchReceipt} className="text-xs font-semibold text-gray-900 hover:text-black">Copy full receipt</button></div>
                                     <div className="mt-2 space-y-1.5">
                                         {receiptAdSetTargets.map(target => <div key={`${target.id || 'no-id'}-${target.name}`} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 rounded-md bg-gray-50 px-3 py-2 text-xs"><span className="font-medium text-gray-800">{target.name}</span>{target.id && <span className="font-mono text-gray-500">{target.id}</span>}</div>)}
                                     </div>
@@ -1041,16 +1081,16 @@ const FacebookCampaignWizardInner = () => {
                             </div>
 
                             <div className="mt-5 flex flex-col justify-center gap-3 sm:flex-row">
-                                <a href={adsManagerHref} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 rounded-lg bg-amber-600 px-5 py-2.5 text-sm font-semibold text-white hover:bg-amber-700">
+                                <a href={adsManagerHref} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 rounded-lg bg-gray-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-black">
                                     Open Ads Manager
                                 </a>
-                                <Link to={campaignPerformanceHref} className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 hover:border-amber-200 hover:text-amber-800">
+                                <Link to={campaignPerformanceHref} className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 hover:border-gray-400 hover:text-gray-900">
                                     {receiptAdSetId ? 'Review created ad set' : 'Open Campaign Performance'}
                                 </Link>
-                                <button type="button" onClick={prepareNextBatch} className="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 hover:border-amber-200 hover:text-amber-800">
+                                <button type="button" onClick={prepareNextBatch} className="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 hover:border-gray-400 hover:text-gray-900">
                                     Start a new batch
                                 </button>
-                                <button type="button" onClick={startNewCampaign} className="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 hover:border-amber-200 hover:text-amber-800">
+                                <button type="button" onClick={startNewCampaign} className="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 hover:border-gray-400 hover:text-gray-900">
                                     Start a new campaign
                                 </button>
                             </div>

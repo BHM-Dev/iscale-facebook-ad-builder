@@ -42,6 +42,11 @@ tools remain available as secondary options for teams that need to create new as
 - Codex working brief: [`CODEX_BRIEF_launcher-ux.md`](../../CODEX_BRIEF_launcher-ux.md).
 
 ## Changelog (newest first)
+- 2026-11-18 Restyle pass 2 (Joel: "very AI", "chunky flow"): the launcher's orange brand color is now black/neutral
+  (selected cards, primary buttons, step list, links, focus rings); amber is kept only where it means a warning
+  (budget guard, reconciliation, missing copy, "multiplies budget"). The wizard skips the Account page when it
+  restores the account used last time (once per visit; Back still reaches it; first-time users and Quick Ad /
+  Launch Pack / Drive flows unchanged). *Not verified live yet*.
 - 2026-11-17 Launch guardrails from the AdStellar launcher pass: a budget that is unusually high for this account
   (above 3x its typical active ad-set budget or 1.5x its largest, from `GET /facebook/budget-baseline`, local DB only)
   shows an amber note on the Campaign/Ad Set step and a confirm before Launch, as does a launch adding more than half

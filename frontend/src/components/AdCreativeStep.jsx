@@ -2632,7 +2632,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                         value={creativeData.creativeName}
                         onChange={(e) => handleInputChange('creativeName', e.target.value)}
                         placeholder="e.g. Summer Sale – June 2025"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                     />
                 </div>}
 
@@ -2644,7 +2644,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                         </label>
                         <button
                             onClick={() => setManualPageEntry(!manualPageEntry)}
-                            className="text-xs text-amber-600 hover:text-amber-800 underline"
+                            className="text-xs text-gray-900 hover:text-black underline"
                         >
                             {manualPageEntry ? 'Select from list' : 'Enter Page ID manually'}
                         </button>
@@ -2656,7 +2656,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                             value={creativeData.pageId}
                             onChange={(e) => handleInputChange('pageId', e.target.value)}
                             placeholder="Enter Facebook Page ID (e.g., 933995649786806)"
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                         />
                     ) : loadingPages ? (
                         <div className="flex items-center gap-2 text-gray-500 py-2">
@@ -2667,7 +2667,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                         <select
                             value={creativeData.pageId}
                             onChange={(e) => handlePageSelection(e.target.value)}
-                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                            className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                         >
                             <option value="">Select a Facebook Page...</option>
                             {pages.map(page => (
@@ -2699,7 +2699,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                             </p>
                             <button
                                 onClick={() => setManualPageEntry(true)}
-                                className="text-xs text-amber-600 font-medium hover:underline"
+                                className="text-xs text-gray-900 font-medium underline-offset-2 hover:underline"
                             >
                                 Enter Page ID manually instead
                             </button>
@@ -2748,14 +2748,14 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                             <button
                                 type="button"
                                 onClick={openLibraryModal}
-                                className="text-left rounded-xl border-2 border-gray-200 bg-white hover:border-amber-300 hover:bg-amber-50 transition-colors p-4"
+                                className="text-left rounded-xl border-2 border-gray-200 bg-white hover:border-gray-400 hover:bg-gray-50 transition-colors p-4"
                             >
-                                <div className="flex items-center gap-2 text-amber-700 font-semibold">
+                                <div className="flex items-center gap-2 text-gray-900 font-semibold">
                                     <BookOpen size={18} />
                                     Generated Ads
                                 </div>
                                 <p className="text-xs text-gray-500 mt-1 mb-3">Reuse images already generated in Ad Builder</p>
-                                <span className="inline-flex items-center text-sm font-semibold text-amber-700 bg-amber-50 rounded-md px-2.5 py-1 border border-amber-200">
+                                <span className="inline-flex items-center text-sm font-semibold text-gray-900 bg-gray-100 rounded-md px-2.5 py-1 border border-gray-200">
                                     Browse Generated Ads
                                 </span>
                             </button>
@@ -2841,7 +2841,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                 <div className="@container">
                                 <div className="grid items-start gap-5 grid-cols-1 @[900px]:grid-cols-[minmax(460px,1.3fr)_minmax(420px,1fr)]">
                                     <div className="max-h-[660px] overflow-y-auto rounded-xl border border-gray-200 bg-white">
-                                        <div className="hidden grid-cols-[76px_minmax(0,1fr)_110px_36px] gap-3 border-b border-gray-200 bg-gray-50 px-4 py-2 text-[10px] font-semibold uppercase tracking-wide text-gray-500 md:grid">
+                                        <div className="hidden grid-cols-[76px_minmax(0,1fr)_110px_36px] gap-3 border-b border-gray-200 bg-gray-50 px-4 py-2 text-[10px] font-semibold   text-gray-500 md:grid">
                                             <span>Creative</span><span>Ad / copy</span><span className="text-right">Status</span><span className="sr-only">Remove</span>
                                         </div>
                                         {creativeData.creatives.map((creative, index) => {
@@ -2850,8 +2850,8 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                             const copyReady = issues.length === 0;
                                             const displayHeadline = creative.headline || (!creative.source || creative.source !== 'drive' ? creativeData.headlines?.[0] || '' : '');
                                             return (
-                                                <div ref={(element) => { copyRowRefs.current[creative.id] = element; }} key={`copy-row-${creative.id}`} className={`grid min-h-[104px] w-full grid-cols-[minmax(0,1fr)_40px] gap-4 border-b border-gray-100 px-5 py-4 transition-colors ${selected ? 'bg-amber-50 shadow-[inset_3px_0_0_0_#d97706]' : 'hover:bg-gray-50'}`}>
-                                                    <button type="button" onClick={() => setSelectedCopyCreativeId(creative.id)} onMouseEnter={(event) => { if (creative.mediaType !== 'video') { const previewWidth = creative.dualPlacement && creative.secondaryImageUrl ? 780 : 400; const previewHeight = 560; const availableWidth = Math.min(previewWidth, window.innerWidth - 24); const availableHeight = Math.min(previewHeight, window.innerHeight - 24); setHoveredCreativePreview({ ...creative, x: Math.max(12, Math.min(event.clientX + 18, window.innerWidth - availableWidth - 12)), y: Math.max(12, Math.min(event.clientY + 18, window.innerHeight - availableHeight - 12)) }); } }} onMouseLeave={() => setHoveredCreativePreview(current => current?.id === creative.id ? null : current)} className="grid min-w-0 grid-cols-[100px_minmax(0,1fr)] gap-4 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-500 md:grid-cols-[116px_minmax(0,1fr)_132px]" title={creative.mediaType !== 'video' ? 'Hover to inspect this creative at a larger size' : undefined}>
+                                                <div ref={(element) => { copyRowRefs.current[creative.id] = element; }} key={`copy-row-${creative.id}`} className={`grid min-h-[104px] w-full grid-cols-[minmax(0,1fr)_40px] gap-4 border-b border-gray-100 px-5 py-4 transition-colors ${selected ? 'bg-gray-50 shadow-[inset_3px_0_0_0_#171717]' : 'hover:bg-gray-50'}`}>
+                                                    <button type="button" onClick={() => setSelectedCopyCreativeId(creative.id)} onMouseEnter={(event) => { if (creative.mediaType !== 'video') { const previewWidth = creative.dualPlacement && creative.secondaryImageUrl ? 780 : 400; const previewHeight = 560; const availableWidth = Math.min(previewWidth, window.innerWidth - 24); const availableHeight = Math.min(previewHeight, window.innerHeight - 24); setHoveredCreativePreview({ ...creative, x: Math.max(12, Math.min(event.clientX + 18, window.innerWidth - availableWidth - 12)), y: Math.max(12, Math.min(event.clientY + 18, window.innerHeight - availableHeight - 12)) }); } }} onMouseLeave={() => setHoveredCreativePreview(current => current?.id === creative.id ? null : current)} className="grid min-w-0 grid-cols-[100px_minmax(0,1fr)] gap-4 text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-900 md:grid-cols-[116px_minmax(0,1fr)_132px]" title={creative.mediaType !== 'video' ? 'Hover to inspect this creative at a larger size' : undefined}>
                                                     <div className="flex h-20 w-[108px] gap-1 overflow-hidden rounded-md border border-gray-200 bg-gray-100 p-1">
                                                         {creative.previewUrl && (creative.mediaType === 'video'
                                                             ? <video src={creative.videoUrl || creative.previewUrl} aria-label="Video creative" className={creative.dualPlacement && (creative.secondaryImageUrl || creative.secondaryVideoUrl) ? 'w-1/2 object-contain' : 'w-full object-contain'} muted playsInline preload="metadata" />
@@ -2897,7 +2897,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                                     </div>
                                                 )}
                                                 {selectedCreative.cropAnchor && selectedCreative.cropAxis && selectedCreative.cropAxis !== 'none' && !selectedCreative.cropping && !selectedCreative.cropFailed && (
-                                                    <div className="mt-2 flex items-center gap-1"><span className="mr-1 text-[11px] text-gray-500">Reposition crop:</span>{['start', 'center', 'end'].map(anchor => { const labels = selectedCreative.cropAxis === 'height' ? { start: 'Top', center: 'Mid', end: 'Bot' } : { start: 'Left', center: 'Ctr', end: 'Right' }; return <button key={anchor} type="button" onClick={() => recropCreative(selectedCreative.id, anchor)} className={`rounded px-2 py-1 text-[11px] font-semibold ${selectedCreative.cropAnchor === anchor ? 'bg-amber-500 text-white' : 'bg-white text-gray-700 ring-1 ring-gray-300 hover:bg-gray-100'}`}>{labels[anchor]}</button>; })}</div>
+                                                    <div className="mt-2 flex items-center gap-1"><span className="mr-1 text-[11px] text-gray-500">Reposition crop:</span>{['start', 'center', 'end'].map(anchor => { const labels = selectedCreative.cropAxis === 'height' ? { start: 'Top', center: 'Mid', end: 'Bot' } : { start: 'Left', center: 'Ctr', end: 'Right' }; return <button key={anchor} type="button" onClick={() => recropCreative(selectedCreative.id, anchor)} className={`rounded px-2 py-1 text-[11px] font-semibold ${selectedCreative.cropAnchor === anchor ? 'bg-gray-900 text-white' : 'bg-white text-gray-700 ring-1 ring-gray-300 hover:bg-gray-100'}`}>{labels[anchor]}</button>; })}</div>
                                                 )}
                                             </div>
                                             {!selectedIsDrive && (!selectedCreative.body || !selectedCreative.headline || !selectedCreative.description || !selectedCreative.cta || !selectedCreative.websiteUrl) && <p className="rounded-lg bg-blue-50 px-3 py-2 text-xs text-blue-800">Showing shared fallback values for this non-Drive row. Editing any field makes this row independent.</p>}
@@ -2905,11 +2905,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                             {selectedCreative.driveCopyRefusedForOtherFile && selectedCreative.driveCopyIntegrityReason && (
                                                 <p className="mt-1 text-[11px] leading-snug text-red-700">{selectedCreative.driveCopyIntegrityReason}</p>
                                             )}
-                                            <label className="block text-xs font-semibold text-gray-700">Primary text *<textarea rows="5" value={selectedBody} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'body', event.target.value)} className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100 ${selectedBody.length > BODY_LIMIT ? 'border-red-400' : 'border-gray-300'}`} /><span className={`mt-1 block text-right text-[11px] ${charCountClass(selectedBody.length, BODY_WARN, BODY_LIMIT)}`}>{selectedBody.length} / {BODY_LIMIT}</span></label>
-                                            <label className="block text-xs font-semibold text-gray-700">Headline *<input value={selectedHeadline} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'headline', event.target.value)} className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100 ${selectedHeadline.length > HEADLINE_LIMIT ? 'border-red-400' : 'border-gray-300'}`} /><span className={`mt-1 block text-right text-[11px] ${charCountClass(selectedHeadline.length, HEADLINE_WARN, HEADLINE_LIMIT)}`}>{selectedHeadline.length} / {HEADLINE_LIMIT}</span></label>
-                                            <label className="block text-xs font-semibold text-gray-700">Description <span className="font-normal text-gray-400">(optional)</span><input value={selectedDescription} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'description', event.target.value)} className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100 ${selectedDescription.length > DESC_LIMIT ? 'border-red-400' : 'border-gray-300'}`} /><span className={`mt-1 block text-right text-[11px] ${charCountClass(selectedDescription.length, DESC_LIMIT, DESC_LIMIT)}`}>{selectedDescription.length} / {DESC_LIMIT}</span></label>
+                                            <label className="block text-xs font-semibold text-gray-700">Primary text *<textarea rows="5" value={selectedBody} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'body', event.target.value)} className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm font-normal focus:border-gray-900 focus:ring-2 focus:ring-gray-200 ${selectedBody.length > BODY_LIMIT ? 'border-red-400' : 'border-gray-300'}`} /><span className={`mt-1 block text-right text-[11px] ${charCountClass(selectedBody.length, BODY_WARN, BODY_LIMIT)}`}>{selectedBody.length} / {BODY_LIMIT}</span></label>
+                                            <label className="block text-xs font-semibold text-gray-700">Headline *<input value={selectedHeadline} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'headline', event.target.value)} className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm font-normal focus:border-gray-900 focus:ring-2 focus:ring-gray-200 ${selectedHeadline.length > HEADLINE_LIMIT ? 'border-red-400' : 'border-gray-300'}`} /><span className={`mt-1 block text-right text-[11px] ${charCountClass(selectedHeadline.length, HEADLINE_WARN, HEADLINE_LIMIT)}`}>{selectedHeadline.length} / {HEADLINE_LIMIT}</span></label>
+                                            <label className="block text-xs font-semibold text-gray-700">Description <span className="font-normal text-gray-400">(optional)</span><input value={selectedDescription} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'description', event.target.value)} className={`mt-1 w-full rounded-lg border px-3 py-2 text-sm font-normal focus:border-gray-900 focus:ring-2 focus:ring-gray-200 ${selectedDescription.length > DESC_LIMIT ? 'border-red-400' : 'border-gray-300'}`} /><span className={`mt-1 block text-right text-[11px] ${charCountClass(selectedDescription.length, DESC_LIMIT, DESC_LIMIT)}`}>{selectedDescription.length} / {DESC_LIMIT}</span></label>
                                             {selectedInvalidCta && <p className="rounded-lg bg-amber-50 px-3 py-2 text-xs text-amber-800">Drive tagged this ad&apos;s CTA as &quot;{selectedInvalidCta}&quot;, which isn&apos;t a Meta-supported CTA. Pick one below, or fix it in Drive and refresh.</p>}
-                                            <label className="block text-xs font-semibold text-gray-700">Meta CTA *<select value={selectedCta} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'cta', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-normal focus:border-amber-500 focus:ring-2 focus:ring-amber-100"><option value="">Select a CTA...</option>{CTA_OPTIONS.map(option => <option key={option} value={option}>{option.replace(/_/g, ' ')}</option>)}</select></label>
+                                            <label className="block text-xs font-semibold text-gray-700">Meta CTA *<select value={selectedCta} onChange={(event) => updateCreativeCopy(selectedCreative.id, 'cta', event.target.value)} className="mt-1 w-full rounded-lg border border-gray-300 bg-white px-3 py-2 text-sm font-normal focus:border-gray-900 focus:ring-2 focus:ring-gray-200"><option value="">Select a CTA...</option>{CTA_OPTIONS.map(option => <option key={option} value={option}>{option.replace(/_/g, ' ')}</option>)}</select></label>
                                         </div>
                                     </aside>
                                 </div>
@@ -3141,7 +3141,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                             <button
                                 type="button"
                                 onClick={addBodyField}
-                                className="text-sm text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1"
+                                className="text-sm text-gray-900 hover:text-black font-medium flex items-center gap-1"
                             >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -3158,7 +3158,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                     onChange={(e) => handleBodyChange(index, e.target.value)}
                                     placeholder={`Body copy ${index + 1}...`}
                                     rows="3"
-                                    className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent ${body && body.length > BODY_LIMIT ? 'border-red-400' : body && body.length > BODY_WARN ? 'border-amber-400' : 'border-gray-300'}`}
+                                    className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent ${body && body.length > BODY_LIMIT ? 'border-red-400' : body && body.length > BODY_WARN ? 'border-amber-400' : 'border-gray-300'}`}
                                 />
                                 <div className="flex justify-between items-center mt-0.5">
                                     <span className="text-xs text-gray-400">
@@ -3199,7 +3199,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                             <button
                                 type="button"
                                 onClick={addHeadlineField}
-                                className="text-sm text-amber-600 hover:text-amber-700 font-medium flex items-center gap-1"
+                                className="text-sm text-gray-900 hover:text-black font-medium flex items-center gap-1"
                             >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -3216,7 +3216,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                     value={headline}
                                     onChange={(e) => handleHeadlineChange(index, e.target.value)}
                                     placeholder={`Headline ${index + 1}...`}
-                                    className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent ${headline && headline.length > HEADLINE_LIMIT ? 'border-red-400' : headline && headline.length > HEADLINE_WARN ? 'border-amber-400' : 'border-gray-300'}`}
+                                    className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent ${headline && headline.length > HEADLINE_LIMIT ? 'border-red-400' : headline && headline.length > HEADLINE_WARN ? 'border-amber-400' : 'border-gray-300'}`}
                                 />
                                 <div className="flex justify-between items-center mt-0.5">
                                     <span className="text-xs text-gray-400">
@@ -3255,7 +3255,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                         value={creativeData.description}
                         onChange={(e) => handleInputChange('description', e.target.value)}
                         placeholder="Shop now and save!"
-                        className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent ${creativeData.description && creativeData.description.length > DESC_LIMIT ? 'border-red-400' : 'border-gray-300'}`}
+                        className={`w-full px-4 py-2 border rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent ${creativeData.description && creativeData.description.length > DESC_LIMIT ? 'border-red-400' : 'border-gray-300'}`}
                     />
                     <div className="flex justify-end mt-0.5">
                         <span className={`text-xs ${creativeData.description && creativeData.description.length > DESC_LIMIT ? 'text-red-600 font-semibold' : 'text-gray-400'}`}>
@@ -3323,7 +3323,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                     <select
                         value={creativeData.cta}
                         onChange={(e) => handleInputChange('cta', e.target.value)}
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                     >
                         {CTA_OPTIONS.map(cta => (
                             <option key={cta} value={cta}>{cta.replace(/_/g, ' ')}</option>
@@ -3342,7 +3342,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                         value={creativeData.websiteUrl}
                         onChange={(e) => handleInputChange('websiteUrl', normalizeDestinationUrl(e.target.value))}
                         placeholder="https://yourwebsite.com/landing"
-                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-amber-500 focus:border-transparent"
+                        className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-gray-900 focus:border-transparent"
                     />
                 </div>}
 
@@ -3366,7 +3366,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                 </button>
                 <button
                     onClick={handleNext}
-                    className="flex items-center gap-2 px-6 py-3 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700"
+                    className="flex items-center gap-2 px-6 py-3 bg-gray-900 text-white rounded-lg font-medium hover:bg-black"
                 >
                     Next Step <ChevronRight size={20} />
                 </button>
@@ -3399,11 +3399,11 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                         <div
                                             key={ad.id}
                                             onClick={() => toggleLibrarySelection(ad.id)}
-                                            className={`relative cursor-pointer rounded-lg overflow-hidden border-2 transition-all ${isSelected ? 'border-amber-500 ring-2 ring-amber-200' : 'border-gray-200 hover:border-amber-300'}`}
+                                            className={`relative cursor-pointer rounded-lg overflow-hidden border-2 transition-all ${isSelected ? 'border-gray-900 ring-2 ring-gray-300' : 'border-gray-200 hover:border-gray-400'}`}
                                         >
                                             <img src={ad.image_url} alt={ad.headline || 'Ad'} className="w-full aspect-square object-cover" loading="lazy" decoding="async" />
                                             {isSelected && (
-                                                <div className="absolute top-2 right-2 bg-amber-500 rounded-full p-0.5">
+                                                <div className="absolute top-2 right-2 bg-gray-900 rounded-full p-0.5">
                                                     <Check size={14} className="text-white" />
                                                 </div>
                                             )}
@@ -3425,7 +3425,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                             <button
                                 onClick={addLibrarySelectionToCreatives}
                                 disabled={selectedLibraryIds.size === 0}
-                                className="px-4 py-2 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                                className="px-4 py-2 bg-gray-900 text-white rounded-lg font-medium hover:bg-black disabled:bg-gray-300 disabled:cursor-not-allowed"
                             >
                                 Add {selectedLibraryIds.size > 0 ? selectedLibraryIds.size : ''} to Campaign
                             </button>
@@ -3536,7 +3536,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                     type="button"
                                     onClick={refreshDriveCopyMatches}
                                     disabled={refreshingDriveCopy || driveLibraryLoading}
-                                    className="shrink-0 rounded-md bg-amber-600 px-2.5 py-1 font-semibold text-white hover:bg-amber-700 disabled:opacity-60"
+                                    className="shrink-0 rounded-md bg-gray-900 px-2.5 py-1 font-semibold text-white hover:bg-black disabled:opacity-60"
                                 >
                                     {refreshingDriveCopy ? 'Refreshing…' : 'Refresh copy'}
                                 </button>
@@ -3549,7 +3549,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                 onChange={(e) => setDriveSearchTerm(e.target.value)}
                                 placeholder={driveRepairPairId ? 'Repairing one pair — search paused' : 'Search filenames, folders, packages, or brands'}
                                 disabled={Boolean(driveRepairPairId)}
-                                className="w-full rounded-lg border border-gray-300 bg-white py-1 pl-9 pr-3 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-100 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400"
+                                className="w-full rounded-lg border border-gray-300 bg-white py-1 pl-9 pr-3 text-sm focus:border-gray-900 focus:ring-2 focus:ring-gray-200 disabled:cursor-not-allowed disabled:bg-gray-50 disabled:text-gray-400"
                             />
                         </label>
                         <div className="flex flex-wrap items-center gap-2">
@@ -3569,7 +3569,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                 className="inline-flex overflow-hidden rounded-lg border border-gray-300 bg-white"
                                 title="Creative groups, not files — a Feed + Stories pair counts once. Filtering by format can list a mixed-format pair under both."
                             >
-                                <span className="border-r border-gray-200 bg-gray-50 px-2 py-1 text-[11px] font-semibold uppercase tracking-wide text-gray-400">
+                                <span className="border-r border-gray-200 bg-gray-50 px-2 py-1 text-[11px] font-semibold   text-gray-400">
                                     Groups
                                 </span>
                                 {[
@@ -3734,7 +3734,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                         value={driveSelectCount}
                                         onChange={(e) => setDriveSelectCount(e.target.value)}
                                         placeholder="e.g. 50"
-                                        className="w-16 shrink-0 rounded-lg border border-gray-300 py-1 px-2 text-xs focus:border-amber-500 focus:ring-2 focus:ring-amber-100"
+                                        className="w-16 shrink-0 rounded-lg border border-gray-300 py-1 px-2 text-xs focus:border-gray-900 focus:ring-2 focus:ring-gray-200"
                                     />
                                     <span className="text-xs text-gray-500">matching assets</span>
                                     <button
@@ -3852,7 +3852,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                             )}
                             <div className="grid gap-3 md:grid-cols-[220px_1fr]">
                                 <aside className="max-h-[54vh] overflow-y-auto rounded-lg border border-gray-200 bg-gray-50 p-2" aria-label="Drive folders">
-                                    <div className="mb-1 px-2 text-[11px] font-semibold uppercase tracking-wide text-gray-500">Folders</div>
+                                    <div className="mb-1 px-2 text-[11px] font-semibold   text-gray-500">Folders</div>
                                     {driveParents.map(parent => {
                                         const selected = parent.key === selectedDriveParentKey;
                                         const selectedCount = parent.groups.filter(group => selectedDriveAssetIds.has(group.id)).length;
@@ -3864,7 +3864,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                                 className={`mb-1 flex w-full items-start gap-2 rounded-md px-2 py-2 text-left text-xs transition-colors ${selected ? 'bg-white font-semibold text-gray-900 shadow-sm ring-1 ring-amber-300' : 'text-gray-700 hover:bg-white'}`}
                                                 title={parent.key}
                                             >
-                                                <FolderOpen size={14} className={`mt-0.5 shrink-0 ${selected ? 'text-amber-600' : 'text-gray-400'}`} />
+                                                <FolderOpen size={14} className={`mt-0.5 shrink-0 ${selected ? 'text-gray-900' : 'text-gray-400'}`} />
                                                 <span className="min-w-0 flex-1 truncate">{parent.key}</span>
                                                 <span className="shrink-0 text-gray-400">{selectedCount > 0 ? `${selectedCount}/${parent.groups.length}` : parent.groups.length}</span>
                                             </button>
@@ -3999,10 +3999,10 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                     const borderClass = selectionBlocked
                                         ? (needsRepair ? 'border-amber-400' : 'border-red-300')
                                         : isSelected
-                                            ? 'border-amber-500 ring-2 ring-amber-200'
+                                            ? 'border-gray-900 ring-2 ring-gray-300'
                                             : alreadyAdded
                                                 ? 'border-blue-300'
-                                                : 'border-gray-200 hover:border-amber-300';
+                                                : 'border-gray-200 hover:border-gray-400';
                                     // The overlay button covers the whole card, so it owns the hover text.
                                     // Must mirror the pill precedence below: a refused tile must never
                                     // show "Refresh after fixing it", which cannot fix a filename collision.
@@ -4032,7 +4032,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                                 aria-disabled={selectionBlocked}
                                                 aria-describedby={selectionBlocked ? cardDescriptionId : undefined}
                                                 title={cardTitle}
-                                                className={`absolute inset-0 z-10 h-full w-full rounded-xl text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-amber-500 ${selectionBlocked ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+                                                className={`absolute inset-0 z-10 h-full w-full rounded-xl text-left focus:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-gray-900 ${selectionBlocked ? 'cursor-not-allowed' : 'cursor-pointer'}`}
                                             />
                                             <div className={`flex h-[96px] gap-1.5 bg-gray-100 p-1 ${group.isPair && group.storiesAsset ? 'items-stretch' : 'items-center justify-center'}`}>
                                                 <div className={`relative ${group.isPair && group.storiesAsset ? 'w-1/2 min-w-0' : 'h-full w-full'}`}>
@@ -4074,7 +4074,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                             <button
                                                 type="button"
                                                 onClick={(event) => { event.stopPropagation(); drivePreviewTriggerRef.current = event.currentTarget; setDrivePreviewGroup(group); }}
-                                                className="absolute right-2 top-2 z-20 rounded-md bg-white/95 p-1 text-gray-700 shadow-sm hover:bg-white focus:outline-none focus:ring-2 focus:ring-amber-500"
+                                                className="absolute right-2 top-2 z-20 rounded-md bg-white/95 p-1 text-gray-700 shadow-sm hover:bg-white focus:outline-none focus:ring-2 focus:ring-gray-900"
                                                 aria-label={`Preview ${asset.file_name}`}
                                                 title="Preview full creative"
                                             >
@@ -4082,7 +4082,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                                             </button>
                                             {selectionBlocked && <span id={cardDescriptionId} className="sr-only">{cardTitle}</span>}
                                             {isSelected && (
-                                                <div className="pointer-events-none absolute bottom-10 right-2 z-20 inline-flex items-center gap-1 rounded-full bg-amber-500 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm">
+                                                <div className="pointer-events-none absolute bottom-10 right-2 z-20 inline-flex items-center gap-1 rounded-full bg-gray-900 px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm">
                                                     <Check size={12} />
                                                     <span>Selected</span>
                                                 </div>
@@ -4176,7 +4176,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                             <button
                                 onClick={addDriveSelectionToCreatives}
                                 disabled={selectedDriveAssetIds.size === 0}
-                                className="px-4 py-2 bg-amber-600 text-white rounded-lg font-medium hover:bg-amber-700 disabled:bg-gray-300 disabled:cursor-not-allowed"
+                                className="px-4 py-2 bg-gray-900 text-white rounded-lg font-medium hover:bg-black disabled:bg-gray-300 disabled:cursor-not-allowed"
                             >
                                 Add {driveSelectionProjectedAdCount > 0 ? driveSelectionProjectedAdCount : ''} Creative{driveSelectionProjectedAdCount !== 1 ? 's' : ''}
                             </button>
