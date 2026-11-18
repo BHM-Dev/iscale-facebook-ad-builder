@@ -1484,6 +1484,17 @@ export default function Research() {
   // summary. Keep the Brief one click away, but land directly in the visual
   // catalog—the closest honest analogue to the GetHookd Explore workflow.
   const [researchView, setResearchView] = useState('library');
+  // Research leads with the GetHookd bridge (Steve, 2026-11-18: Joel researches in GetHookd). The older catalog
+  // tools (verticals, feed, queue, brief, advertisers, watchlist, tests) sit behind "More research tools" and load
+  // nothing until opened. Whether it was left open is remembered per browser.
+  const [showMoreTools, setShowMoreTools] = useState(() => {
+    try { return window.localStorage.getItem('research.moreTools') === '1'; } catch { return false; }
+  });
+  const toolsLoadedRef = useRef(false);
+  const toggleMoreTools = () => setShowMoreTools(open => {
+    try { window.localStorage.setItem('research.moreTools', open ? '0' : '1'); } catch { /* per-browser convenience only */ }
+    return !open;
+  });
   const [showResearchMore, setShowResearchMore] = useState(false);
   const [briefVisualFilter, setBriefVisualFilter] = useState('all');
   const [showCatalogTools, setShowCatalogTools] = useState(false);
@@ -1595,9 +1606,11 @@ export default function Research() {
   }, [activeVertical, activeSubVertical]);
 
   useEffect(() => {
+    if (!showMoreTools || toolsLoadedRef.current) return;
+    toolsLoadedRef.current = true;
     loadConfig();
     loadBoards();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [showMoreTools]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     if (activeBoardId) {
@@ -2578,7 +2591,7 @@ export default function Research() {
           </h1>
           <p className="text-sm text-gray-500 mt-0.5">Find patterns worth testing.</p>
         </div>
-        <div className="flex flex-col items-end gap-1">
+        {showMoreTools && <div className="flex flex-col items-end gap-1">
           <button
             type="button"
             onClick={() => setShowCatalogTools(open => !open)}
@@ -2631,11 +2644,25 @@ export default function Research() {
           {refreshing && (
             <p className="text-xs text-gray-400">Pulling live Ad Library examples — a full vertical refresh can take several minutes</p>
           )}
-        </div>
+        </div>}
       </div>
 
-      {researchView === 'library' && <GetHookdPanel />}
+      <GetHookdPanel />
 
+      <button
+        type="button"
+        onClick={toggleMoreTools}
+        aria-expanded={showMoreTools}
+        className="flex w-full items-center justify-between rounded-xl border border-gray-200 bg-white px-5 py-3 text-left hover:bg-gray-50"
+      >
+        <span>
+          <span className="block text-sm font-semibold text-gray-900">More research tools</span>
+          <span className="block text-xs text-gray-500">Meta Ad Library captures by vertical, queue, brief, advertisers, watchlist and test backlog.</span>
+        </span>
+        <ChevronDown size={16} className={`shrink-0 text-gray-500 transition-transform ${showMoreTools ? 'rotate-180' : ''}`} />
+      </button>
+
+      {showMoreTools && <>
       {/* Capture guidance belongs to the operator workspace, not the default brief. */}
       {researchView === 'library' && <div className="bg-white border border-indigo-100 rounded-xl p-4">
         <div className="flex items-start gap-3">
@@ -3038,6 +3065,7 @@ export default function Research() {
           )}
         </div>
       </div>
+      </>}
       </>}
 
       <CompareTray ads={compareAds} onRemove={id => setCompareIds(ids => ids.filter(item => item !== id))} onClear={() => setCompareIds([])} onOpen={() => setCompareOpen(true)} />

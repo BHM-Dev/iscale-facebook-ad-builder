@@ -57,6 +57,9 @@ product workflow). **Audit findings below are open unless marked FIXED.** Backen
 - **Not verified:** everything else above is code-reading only; nothing was run or tried against production. Screen order is inferred, not seen.
 
 ## Changelog
+- 2026-11-18 Research leads with "From GetHookd". Everything else (vertical tabs, feed, queue, brief, advertisers,
+  watchlist, test backlog, Manage research) sits behind a "More research tools" toggle, closed by default and
+  remembered per browser; its vertical config, boards and browse calls load only once it is opened.
 - 2026-11-18 GetHookd bridge (Steve; Joel researches in GetHookd): a "From GetHookd" panel at the top of Research
   lists the workspace's GetHookd saved ads (free API) and opens any pasted GetHookd ad link (works for board ads too).
   "Build like this" copies the ad's image (a video's poster frame) into R2 and opens Build New Ad with it as the
