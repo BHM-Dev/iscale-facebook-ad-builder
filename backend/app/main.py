@@ -669,6 +669,8 @@ async def startup_event():
                     .distinct().limit(8).all()
                 )]
                 accounts = list(dict.fromkeys([*proposal_service.proposal_accounts(), *max_cpl_service.recent_accounts(), *live_accounts]))
+                # Accounts with no revenue mapping can never get a Max CPL; warming them just failed every 10 min.
+                accounts = [a for a in accounts if max_cpl_service.has_revenue_mapping(a)]
                 for account_id in accounts:
                     outcome = max_cpl_service.warm(db, account_id)
                     if outcome not in ("fresh", "settled"):

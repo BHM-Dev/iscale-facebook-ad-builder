@@ -64,6 +64,9 @@ API: `backend/app/api/v1/{facebook,auto_pause}.py`; Meta calls: `backend/app/ser
 - Status overrides (local optimistic state) are not cleared by Sync.
 
 ## Changelog (newest first)
+- 2026-11-18 Max CPL skips accounts with no Switchboard offer mapping before its 30-day Meta pull, and the warm job
+  no longer warms them (act_708427975139366 and act_831886575104941 failed every 10 min, each after a wasted Meta
+  pull). *Unit-tested*; warm log to be checked after deploy.
 - 2026-11-18 Max CPL warm starts 1 min after boot instead of 5, so the column isn't cold for the first 5 min
   after each deploy. *Verified in production*: 65ms at boot+86s (was 12.4s).
 - 2026-11-18 Date range fixes (verified bug in production): the first load used 'today' whatever the picker

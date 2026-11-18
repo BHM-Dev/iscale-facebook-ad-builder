@@ -136,12 +136,25 @@ def warm(db, account_id: str, refresh_after: int = 1800, days: int = 30, target_
         return "settled" if result.get("settled") else "failed"
 
 
+def has_revenue_mapping(account_id: str) -> bool:
+    """True when the account has Switchboard offers mapped, i.e. Max CPL can ever be computed for it."""
+    from app.api.v1 import pnl
+    try:
+        return bool(pnl._everflow_offer_names_for_account(account_id))
+    except Exception:  # noqa: BLE001 — unknown: let the normal path try and report
+        return True
+
+
 def _compute(db, account_id, days, target_roas):
     # Complete days only, ending yesterday in Pacific time: today's leads have no revenue yet and would
     # drag revenue per lead (and so Max CPL) down.
     from app.services.daily_close_service import closed_day
     until = closed_day()
     since = until - timedelta(days=days - 1)
+    if not has_revenue_mapping(account_id):
+        # Check before the 30-day Meta pull: without an offer mapping there is no revenue to divide by, so the
+        # pull was wasted on every load and every warm tick (act_708.../act_831..., 2026-11-18).
+        raise proposal_service.RevenueUnavailable("no Switchboard offer mapping")
     rows = _pull_rows(account_id, since, until)
     spend = sum(float(row.get("spend") or 0) for row in rows)
     revenue = proposal_service.revenue_by_adset_day(db, account_id, since, until, spend)

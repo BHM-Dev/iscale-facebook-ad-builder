@@ -14,6 +14,7 @@ def _setup(monkeypatch, rows, revenue):
     monkeypatch.setattr(dc, "closed_day", lambda: date(2026, 11, 4))
     monkeypatch.setattr(service, "_pull_rows", rows)
     monkeypatch.setattr(service.proposal_service, "revenue_by_adset_day", revenue)
+    monkeypatch.setattr(service, "has_revenue_mapping", lambda account_id: True)
     service._CACHE.clear()
 
 
@@ -69,3 +70,26 @@ def test_unexpected_error_is_generic(monkeypatch):
     _setup(monkeypatch, boom, lambda *a: {})
     result = service.compute_max_cpl(object(), "act_3")
     assert result["available"] is False and "secret" not in result["reason"]
+
+
+def test_unmapped_account_skips_the_meta_pull(monkeypatch):
+    """No offer mapping: report unavailable without the 30-day Meta pull (it ran every 10 min for nothing)."""
+    pulls = []
+    _setup(monkeypatch, lambda *a: pulls.append(a) or [], lambda *a, **k: {})
+    monkeypatch.setattr(service, "has_revenue_mapping", lambda account_id: False)
+    result = service.compute_max_cpl(None, "act_708")
+    assert result["available"] is False and "offer mapping" in result["reason"]
+    assert pulls == []
+    assert service.warm(None, "act_708") == "failed" and pulls == []
+
+
+def test_mapping_check_failure_means_try(monkeypatch):
+    from app.api.v1 import pnl
+    def boom(account_id):
+        raise RuntimeError("env unreadable")
+    monkeypatch.setattr(pnl, "_everflow_offer_names_for_account", boom)
+    assert service.has_revenue_mapping("act_1") is True
+    monkeypatch.setattr(pnl, "_everflow_offer_names_for_account", lambda a: {"Get Business Coverage"})
+    assert service.has_revenue_mapping("act_1") is True
+    monkeypatch.setattr(pnl, "_everflow_offer_names_for_account", lambda a: set())
+    assert service.has_revenue_mapping("act_1") is False
