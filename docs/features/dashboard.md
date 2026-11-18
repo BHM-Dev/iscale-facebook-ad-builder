@@ -34,7 +34,7 @@ This file covers the **money-moving actions**; other cards are documented in the
 - 2026-11-18 Account Health: the 'Performance by pixel' table loads only when the card is opened (it ran a 13-21s
   Meta + RedTrack pull on every Dashboard load while collapsed), and is cached: fresh 30 min, then the last result
   (up to 24h) shows instantly while it refreshes in the background, with its pull time shown. Same-scope cold opens
-  share one pull. *Unit-tested*; verify the second open is instant.
+  share one pull. *Verified in production*: cold 22.0s, cached 66ms; opening the card showed the table in ~0.1s with 'pulled 12:17 PM'.
 - 2026-11-18 First load of the day: a scheduler job keeps the Dashboard's insights warm for the main accounts
   (plus up to 4 accounts opened in the last 24h), 6 a.m. to 11 p.m. ET. 'Today' is re-pulled every 5 min and served
   for up to 6 min (plus Meta's own 60s cache); 'yesterday' hourly (late conversions still move it, so the header
