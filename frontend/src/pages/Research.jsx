@@ -3,6 +3,7 @@ import { Ban, FlaskConical, RefreshCw, Star, ExternalLink, ChevronDown, Trash2, 
 import { NavLink, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { useToast } from '../context/ToastContext';
+import GetHookdPanel from '../components/GetHookdPanel';
 import { parseApiError } from '../lib/apiErrors';
 import {
   addResearchBoardItem,
@@ -2632,6 +2633,8 @@ export default function Research() {
           )}
         </div>
       </div>
+
+      {researchView === 'library' && <GetHookdPanel />}
 
       {/* Capture guidance belongs to the operator workspace, not the default brief. */}
       {researchView === 'library' && <div className="bg-white border border-indigo-100 rounded-xl p-4">

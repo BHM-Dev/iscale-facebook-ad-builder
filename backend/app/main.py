@@ -890,7 +890,7 @@ async def shutdown_event():
 
 
 # Include Routers
-from app.api.v1 import feedback, brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users, auto_pause, redtrack, ai_insights, ad_copy_library, intelligence, creative_angles, pnl, drive_assets, drive_health, drive_sync_runs, capi_quality, launch_packs, launch_outcomes, proposals, insights, daily_close, naming_presets, winners, usage
+from app.api.v1 import feedback, brands, products, research, generated_ads, templates, facebook, uploads, dashboard, copy_generation, profiles, ad_remix, prompts, ad_styles, auth, users, auto_pause, redtrack, ai_insights, ad_copy_library, intelligence, creative_angles, pnl, drive_assets, drive_health, drive_sync_runs, capi_quality, launch_packs, launch_outcomes, proposals, insights, daily_close, naming_presets, winners, usage, gethookd
 
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(users.router, prefix="/api/v1/users", tags=["users"])
@@ -927,6 +927,7 @@ app.include_router(daily_close.router, prefix="/api/v1/daily-close", tags=["dail
 app.include_router(naming_presets.router, prefix="/api/v1/naming-presets", tags=["naming-presets"])
 app.include_router(winners.router, prefix="/api/v1/winners", tags=["winners"])
 app.include_router(usage.router, prefix="/api/v1/usage", tags=["usage"])
+app.include_router(gethookd.router, prefix="/api/v1/gethookd", tags=["gethookd"])
 
 # Mount static files for uploads (same path as generated_ads save location)
 uploads_dir = str(settings.upload_dir)

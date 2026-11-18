@@ -517,6 +517,7 @@ Custom modal with backdrop blur, clear title, red button for destructive actions
 | `SLACK_BOT_TOKEN` | Confirm with Golden |
 | `SLACK_SIGNING_SECRET` | Needed for Slack intelligence bot (Phase 2, not yet built) |
 | `CAPI_QUALITY_ACCOUNT_IDS` | Active, added 2026-08-28. Comma-separated `act_...` allowlist scoping the CAPI Match Quality feature (see below) to specific accounts. Currently `act_521142087204815,act_737291135429748` (RHO - Commercial Insurance, RHO 4). Unset = tracks every visible account — don't unset without reason, the unscoped version pulled ~26 mostly-dead legacy pixels. |
+| `GETHOOKD_API_KEY` | Pending (2026-11-18). GetHookd API token (GetHookd -> API; scopes swipe-file:read + explore:read) for the Research "From GetHookd" bridge. Unset = panel shows "not connected". Only free endpoints are called. |
 
 **Local dev (`.env.local` in project root):** Connects to production VPS DB + R2 for shared data.
 
