@@ -906,11 +906,11 @@ const AdSetStep = ({ onNext, onBack, forceExistingMode = false, freshSession = f
                             ) : pixelsError ? (
                                 <div className="text-sm text-red-700 bg-red-50 border border-red-200 rounded-lg p-3">
                                     {pixelsError}
-                                    <button type="button" onClick={fetchPixels} className="ml-2 text-gray-900 underline-offset-2 hover:underline font-medium">Retry</button>
+                                    <button type="button" onClick={fetchPixels} className="ml-2 text-blue-600 underline-offset-2 hover:underline font-medium">Retry</button>
                                 </div>
                             ) : pixels.length === 0 ? (
                                 <div className="text-sm text-gray-600 bg-gray-50 border border-gray-200 rounded-lg p-3">
-                                    No pixels found. Create a pixel in <a href="https://business.facebook.com/events_manager" target="_blank" rel="noopener noreferrer" className="text-gray-900 underline-offset-2 hover:underline">Meta Events Manager</a> and link it to this ad account.
+                                    No pixels found. Create a pixel in <a href="https://business.facebook.com/events_manager" target="_blank" rel="noopener noreferrer" className="text-blue-600 underline-offset-2 hover:underline">Meta Events Manager</a> and link it to this ad account.
                                 </div>
                             ) : (
                                 <select

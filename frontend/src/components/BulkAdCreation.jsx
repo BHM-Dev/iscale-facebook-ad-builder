@@ -2678,7 +2678,7 @@ const BulkAdCreation = ({ onNext, onBack }) => {
                                                         )}
                                                         {row.outcome && <span className={`mt-1 inline-flex rounded-full px-2 py-1 text-[11px] font-semibold ${row.outcome.cls}`}>{row.outcome.label}</span>}
                                                     </div>
-                                                    <button type="button" onClick={(event) => { event.stopPropagation(); setSelectedManifestAdId(row.ad.id); setEditDrawerOpen(true); }} className="text-right text-xs font-semibold text-gray-900 hover:text-black">Open →</button>
+                                                    <button type="button" onClick={(event) => { event.stopPropagation(); setSelectedManifestAdId(row.ad.id); setEditDrawerOpen(true); }} className="text-right text-xs font-semibold text-blue-600 hover:text-blue-700">Open →</button>
                                                 </div>
                                             );
                                         })}

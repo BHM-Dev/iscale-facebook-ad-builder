@@ -8,6 +8,10 @@ function neutralAccent() {
   };
 }
 
+function blueText() {
+  return { 400: '#3b82f6', 500: '#2563eb', 600: '#2563eb', 700: '#1d4ed8', 800: '#1e40af', 900: '#1e3a8a', 950: '#172554' };
+}
+
 /** @type {import('tailwindcss').Config} */
 export default {
   content: [
@@ -26,6 +30,11 @@ export default {
       },
       textColor: {
         gray: { 400: '#6b7280', 500: '#4b5563', 600: '#374151' },
+        // Accent TEXT (links, tabs, labels) is blue like GetHookd so links read as links; fills, borders and
+        // selected states stay neutral via `colors` above (Steve, 2026-11-18).
+        indigo: blueText(),
+        violet: blueText(),
+        purple: blueText(),
       },
       fontWeight: {
         bold: '600',

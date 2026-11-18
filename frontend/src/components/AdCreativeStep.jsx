@@ -2644,7 +2644,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                         </label>
                         <button
                             onClick={() => setManualPageEntry(!manualPageEntry)}
-                            className="text-xs text-gray-900 hover:text-black underline"
+                            className="text-xs text-blue-600 hover:text-blue-700 underline"
                         >
                             {manualPageEntry ? 'Select from list' : 'Enter Page ID manually'}
                         </button>
@@ -2699,7 +2699,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                             </p>
                             <button
                                 onClick={() => setManualPageEntry(true)}
-                                className="text-xs text-gray-900 font-medium underline-offset-2 hover:underline"
+                                className="text-xs text-blue-600 font-medium underline-offset-2 hover:underline"
                             >
                                 Enter Page ID manually instead
                             </button>
@@ -3141,7 +3141,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                             <button
                                 type="button"
                                 onClick={addBodyField}
-                                className="text-sm text-gray-900 hover:text-black font-medium flex items-center gap-1"
+                                className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
                             >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -3199,7 +3199,7 @@ const AdCreativeStep = ({ onNext, onBack, mode = 'combinations', preferLaunchRea
                             <button
                                 type="button"
                                 onClick={addHeadlineField}
-                                className="text-sm text-gray-900 hover:text-black font-medium flex items-center gap-1"
+                                className="text-sm text-blue-600 hover:text-blue-700 font-medium flex items-center gap-1"
                             >
                                 <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />

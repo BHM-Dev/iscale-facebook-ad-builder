@@ -964,7 +964,7 @@ const FacebookCampaignWizardInner = () => {
                             Launching into <span className="font-semibold text-gray-900">{selectedAdAccount.name}</span>
                             <span className="ml-1.5 text-xs text-gray-500">{selectedAdAccount.accountId ? `act_${String(selectedAdAccount.accountId).replace(/^act_/, '')}` : selectedAdAccount.id}</span>
                         </span>
-                        <button type="button" onClick={() => goToStep(1)} className="text-sm font-semibold text-gray-900 underline-offset-2 hover:underline">Change account</button>
+                        <button type="button" onClick={() => goToStep(1)} className="text-sm font-semibold text-blue-600 underline-offset-2 hover:underline">Change account</button>
                     </div>
                 )}
                 <div className="min-h-[400px]">
@@ -1061,7 +1061,7 @@ const FacebookCampaignWizardInner = () => {
                                 {receiptCreatedAt && <p className="mt-4 border-t border-gray-100 pt-4 text-xs text-gray-500">Created {receiptCreatedAt} · Requested delivery states were sent to Meta; verify effective campaign, ad-set, and ad status in Ads Manager.</p>}
                                 {(receiptPageName || receiptDestinationUrl) && <div className="mt-4 grid gap-3 border-t border-gray-100 pt-4 text-xs sm:grid-cols-2"><div><p className="font-semibold text-gray-400">Facebook Page</p><p className="mt-1 break-words font-medium text-gray-800">{receiptPageName || 'Not recorded'}{launchReceipt?.pageId && launchReceipt.pageId !== receiptPageName ? ` · ${launchReceipt.pageId}` : ''}</p></div><div><p className="font-semibold text-gray-400">Destination URL</p><p className="mt-1 break-all font-medium text-gray-800">{receiptDestinationUrl || 'Not recorded'}</p></div></div>}
                                 <div className="mt-4 border-t border-gray-100 pt-4">
-                                    <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold text-gray-400">Ad sets to verify</p><button type="button" onClick={copyLaunchReceipt} className="text-xs font-semibold text-gray-900 hover:text-black">Copy full receipt</button></div>
+                                    <div className="flex items-center justify-between gap-3"><p className="text-xs font-semibold text-gray-400">Ad sets to verify</p><button type="button" onClick={copyLaunchReceipt} className="text-xs font-semibold text-blue-600 hover:text-blue-700">Copy full receipt</button></div>
                                     <div className="mt-2 space-y-1.5">
                                         {receiptAdSetTargets.map(target => <div key={`${target.id || 'no-id'}-${target.name}`} className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5 rounded-md bg-gray-50 px-3 py-2 text-xs"><span className="font-medium text-gray-800">{target.name}</span>{target.id && <span className="font-mono text-gray-500">{target.id}</span>}</div>)}
                                     </div>
@@ -1086,13 +1086,13 @@ const FacebookCampaignWizardInner = () => {
                                     Open Ads Manager
                                 </a>
                                 <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm">
-                                    <Link to={campaignPerformanceHref} className="font-semibold text-gray-700 underline-offset-2 hover:text-gray-900 hover:underline">
+                                    <Link to={campaignPerformanceHref} className="font-semibold text-blue-600 underline-offset-2 hover:text-blue-700 hover:underline">
                                         {receiptAdSetId ? 'Review created ad set' : 'Open Campaign Performance'}
                                     </Link>
-                                    <button type="button" onClick={prepareNextBatch} className="font-semibold text-gray-700 underline-offset-2 hover:text-gray-900 hover:underline">
+                                    <button type="button" onClick={prepareNextBatch} className="font-semibold text-blue-600 underline-offset-2 hover:text-blue-700 hover:underline">
                                         Start a new batch
                                     </button>
-                                    <button type="button" onClick={startNewCampaign} className="font-semibold text-gray-700 underline-offset-2 hover:text-gray-900 hover:underline">
+                                    <button type="button" onClick={startNewCampaign} className="font-semibold text-blue-600 underline-offset-2 hover:text-blue-700 hover:underline">
                                         Start a new campaign
                                     </button>
                                 </div>

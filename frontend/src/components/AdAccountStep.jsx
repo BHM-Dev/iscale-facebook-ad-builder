@@ -131,7 +131,7 @@ const AdAccountStep = ({ onNext, targetAccountId = null, onAccountsLoaded = null
                         Error loading ad accounts: {accountsError}
                         <button
                             onClick={fetchAdAccounts}
-                            className="ml-2 text-gray-900 underline-offset-2 hover:underline"
+                            className="ml-2 text-blue-600 underline-offset-2 hover:underline"
                         >
                             Retry
                         </button>
