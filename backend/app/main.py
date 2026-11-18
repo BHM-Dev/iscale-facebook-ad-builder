@@ -675,9 +675,11 @@ async def startup_event():
             finally:
                 db.close()
 
-        # Boot+5 min (clear of auto-pause +2 and Drive +7), then every 10 min.
+        # Boot+1 min, then every 10 min. It was boot+5, which left Campaign Performance's Max CPL column cold
+        # (~12s) for the first 5 minutes after every deploy. It may overlap auto-pause (+2); Meta limits are per
+        # account per hour, so overlap costs no more quota than running them minutes apart.
         scheduler.add_job(scheduled_max_cpl_warm, 'interval', minutes=10, id='max_cpl_warm',
-                          start_date=_boot + timedelta(minutes=5), max_instances=1, coalesce=True)
+                          start_date=_boot + timedelta(minutes=1), max_instances=1, coalesce=True)
 
         def _warm_dashboard(presets):
             """Keep the Dashboard's first load instant (Steve, 2026-11-18): its insights call took ~4.5s cold
