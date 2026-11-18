@@ -111,8 +111,8 @@ export default function Settings() {
         <div className="max-w-7xl mx-auto">
             {/* Header */}
             <div className="mb-8">
-                <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-                    <SettingsIcon size={32} className="text-purple-600" />
+                <h1 className="text-2xl font-semibold text-gray-900 flex items-center gap-3">
+                    <SettingsIcon size={24} className="text-purple-600" />
                     Settings
                 </h1>
                 <p className="text-gray-600 mt-1">Manage your ad styles and application settings</p>

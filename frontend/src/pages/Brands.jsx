@@ -60,8 +60,8 @@ const Brands = () => {
         <div className="max-w-6xl mx-auto">
             <div className="flex justify-between items-center mb-8">
                 <div>
-                    <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-                        <Briefcase size={32} className="text-amber-600" />
+                    <h1 className="text-2xl font-semibold text-gray-900 flex items-center gap-3">
+                        <Briefcase size={24} className="text-amber-600" />
                         Brand Management
                     </h1>
                     <p className="text-gray-600 mt-2">Manage your brands, assets, and styles.</p>

@@ -464,8 +464,8 @@ export default function GeneratedAds() {
             {/* Header */}
             <div className="mb-8 flex items-center justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-                        <Image size={32} className="text-amber-600" />
+                    <h1 className="text-2xl font-semibold text-gray-900 flex items-center gap-3">
+                        <Image size={24} className="text-amber-600" />
                         Generated Ads
                     </h1>
                     <p className="text-gray-600 mt-1">View and manage all your AI-generated ad creatives</p>

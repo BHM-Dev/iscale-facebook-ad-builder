@@ -653,8 +653,8 @@ const FacebookCampaignWizardInner = () => {
                 only during Step 1. Each crumb only appears once its step is behind us
                 (isCompleted), and clicking one jumps back via the existing goToStep. */}
             <div>
-                <h1 className="text-3xl font-bold text-gray-900 mb-2 flex items-center gap-3">
-                    <Megaphone size={32} className="text-gray-900" />
+                <h1 className="text-2xl font-semibold text-gray-900 mb-2 flex items-center gap-3">
+                    <Megaphone size={24} className="text-gray-900" />
                     Launch Ads
                 </h1>
                 {(selectedAdAccount || campaignData?.name || adsetData?.name) && currentStep > 1 ? (
@@ -1035,7 +1035,7 @@ const FacebookCampaignWizardInner = () => {
                             <div className="rounded-2xl border border-emerald-200 bg-emerald-50 p-6 text-center">
                                 <CheckCircle2 className="mx-auto mb-4 text-emerald-600" size={56} />
                                 <p className="text-xs font-bold tracking-[0.16em] text-emerald-700">Launch receipt</p>
-                                <h2 className="mt-2 text-3xl font-bold text-gray-900">Launch completed</h2>
+                                <h2 className="mt-2 text-2xl font-semibold text-gray-900">Launch completed</h2>
                                 <p className="mx-auto mt-3 max-w-xl text-sm leading-6 text-gray-700">
                                     For a new campaign, the campaign is requested paused while new ad sets and ads are ready beneath it. Existing campaigns and ad sets preserve their selected delivery state. Verify the hierarchy in Ads Manager before spending.
                                 </p>
@@ -1080,19 +1080,22 @@ const FacebookCampaignWizardInner = () => {
                                 </div>
                             </div>
 
-                            <div className="mt-5 flex flex-col justify-center gap-3 sm:flex-row">
+                            {/* One primary action; the rest are quieter links (Joel, 2026-11-18: "chunky"). */}
+                            <div className="mt-5 flex flex-col items-center gap-3">
                                 <a href={adsManagerHref} target="_blank" rel="noreferrer" className="inline-flex items-center justify-center gap-2 rounded-lg bg-gray-900 px-5 py-2.5 text-sm font-semibold text-white hover:bg-black">
                                     Open Ads Manager
                                 </a>
-                                <Link to={campaignPerformanceHref} className="inline-flex items-center justify-center gap-2 rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 hover:border-gray-400 hover:text-gray-900">
-                                    {receiptAdSetId ? 'Review created ad set' : 'Open Campaign Performance'}
-                                </Link>
-                                <button type="button" onClick={prepareNextBatch} className="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 hover:border-gray-400 hover:text-gray-900">
-                                    Start a new batch
-                                </button>
-                                <button type="button" onClick={startNewCampaign} className="inline-flex items-center justify-center rounded-lg border border-gray-200 bg-white px-5 py-2.5 text-sm font-semibold text-gray-700 hover:border-gray-400 hover:text-gray-900">
-                                    Start a new campaign
-                                </button>
+                                <div className="flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-sm">
+                                    <Link to={campaignPerformanceHref} className="font-semibold text-gray-700 underline-offset-2 hover:text-gray-900 hover:underline">
+                                        {receiptAdSetId ? 'Review created ad set' : 'Open Campaign Performance'}
+                                    </Link>
+                                    <button type="button" onClick={prepareNextBatch} className="font-semibold text-gray-700 underline-offset-2 hover:text-gray-900 hover:underline">
+                                        Start a new batch
+                                    </button>
+                                    <button type="button" onClick={startNewCampaign} className="font-semibold text-gray-700 underline-offset-2 hover:text-gray-900 hover:underline">
+                                        Start a new campaign
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     )}

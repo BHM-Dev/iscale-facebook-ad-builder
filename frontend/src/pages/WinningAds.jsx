@@ -109,8 +109,8 @@ const WinningAds = () => {
             {/* Header */}
             <div className="mb-8 flex items-center justify-between">
                 <div>
-                    <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-                        <Star size={32} className="text-amber-600" />
+                    <h1 className="text-2xl font-semibold text-gray-900 flex items-center gap-3">
+                        <Star size={24} className="text-amber-600" />
                         Image Templates
                     </h1>
                     <p className="text-gray-600 mt-1">Browse and manage your winning ad templates</p>

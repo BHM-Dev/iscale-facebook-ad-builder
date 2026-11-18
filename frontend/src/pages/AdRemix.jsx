@@ -941,8 +941,8 @@ export default function AdRemix() {
         <div className="max-w-[1800px] mx-auto">
             {/* Header */}
             <div className="mb-8">
-                <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-                    <Sparkles size={32} className="text-purple-600" />
+                <h1 className="text-2xl font-semibold text-gray-900 flex items-center gap-3">
+                    <Sparkles size={24} className="text-purple-600" />
                     Build New Ad
                 </h1>
                 <p className="text-gray-600 mt-1">{researchInspiration ? 'Study a competitor creative and build an original ad in your brand voice.' : 'Start from a winning ad and rebuild it with your brand voice.'}</p>

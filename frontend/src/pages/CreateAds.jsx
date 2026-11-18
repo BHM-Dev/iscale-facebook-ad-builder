@@ -92,7 +92,7 @@ export default function CreateAds() {
     return (
         <div className="max-w-5xl mx-auto">
             <div className="mb-8">
-                <h1 className="text-3xl font-bold text-gray-900">Launch Creatives</h1>
+                <h1 className="text-2xl font-semibold text-gray-900">Launch Creatives</h1>
                 <p className="text-gray-600 mt-2">Start with approved creative, then launch it safely into Meta.</p>
             </div>
 

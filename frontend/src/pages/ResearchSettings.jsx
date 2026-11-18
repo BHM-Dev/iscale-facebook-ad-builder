@@ -90,7 +90,7 @@ const ResearchSettings = () => {
 
     return (
         <div className="max-w-6xl mx-auto p-6">
-            <h1 className="text-3xl font-bold mb-6">Research Settings</h1>
+            <h1 className="text-2xl font-semibold mb-6">Research Settings</h1>
 
             {/* Page Blacklist Section */}
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6 mb-6">

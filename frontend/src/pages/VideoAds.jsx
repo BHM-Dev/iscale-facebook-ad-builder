@@ -71,8 +71,8 @@ export default function VideoAds() {
         <div className="max-w-[1800px] mx-auto">
             {/* Header */}
             <div className="mb-8">
-                <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-                    <Video size={32} className="text-amber-600" />
+                <h1 className="text-2xl font-semibold text-gray-900 flex items-center gap-3">
+                    <Video size={24} className="text-amber-600" />
                     Create Video Ads
                 </h1>
                 <p className="text-gray-600 mt-1">Generate engaging video ads from your product assets</p>

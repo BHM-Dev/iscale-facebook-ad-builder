@@ -13,7 +13,7 @@ export default function BrandsHub() {
   return (
     <div className="max-w-5xl mx-auto">
       <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">Brands</h1>
+        <h1 className="text-2xl font-semibold text-gray-900">Brands</h1>
         <p className="text-gray-600 mt-2">Manage your brand building blocks</p>
       </div>
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">

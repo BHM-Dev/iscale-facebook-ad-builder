@@ -542,8 +542,8 @@ export default function ImageAds() {
         <div className={`${mode === 'quick' ? 'max-w-[1800px]' : 'max-w-5xl'} mx-auto`}>
             {/* Header */}
             <div className="mb-8">
-                <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-                    <Image size={32} className="text-amber-600" />
+                <h1 className="text-2xl font-semibold text-gray-900 flex items-center gap-3">
+                    <Image size={24} className="text-amber-600" />
                     Create Image Ads
                 </h1>
                 <p className="text-gray-600 mt-1">Generate AI-powered ads using winning templates</p>

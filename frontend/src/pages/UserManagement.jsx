@@ -380,8 +380,8 @@ const UserManagement = () => {
             {/* Header */}
             <div className="flex justify-between items-center mb-8">
                 <div>
-                    <h1 className="text-3xl font-bold text-gray-900 flex items-center gap-3">
-                        <Users size={32} className="text-amber-600" />
+                    <h1 className="text-2xl font-semibold text-gray-900 flex items-center gap-3">
+                        <Users size={24} className="text-amber-600" />
                         User Management
                     </h1>
                     <p className="text-gray-600 mt-2">Manage users, roles, and permissions.</p>
