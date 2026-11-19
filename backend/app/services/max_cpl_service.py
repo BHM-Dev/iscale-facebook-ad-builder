@@ -22,6 +22,9 @@ RECENT_WINDOW_SECONDS = 24 * 3600
 _RECENT: dict[str, float] = {}   # account_id -> last time someone opened Max CPL for it
 META_TIMEOUT_SECONDS = 30
 MIN_NICHE_LEADS = 40
+# Revenue-per-lead window. 7 days, not 30 (Steve, 2026-11-19): Switchboard lead values fell ~25-40% mid-November
+# after a buyer change, and a 30-day window kept pricing Max CPL off early-month values, ~$10/lead too generous.
+WINDOW_DAYS = 7
 
 
 def _cached(key):
@@ -80,7 +83,7 @@ def _pull_rows(account_id, since, until):
         pool.shutdown(wait=False)   # a timed-out read-only pull is abandoned, never waited on
 
 
-def compute_max_cpl(db, account_id: str, days: int = 30, target_roas: float = 1.30) -> dict:
+def compute_max_cpl(db, account_id: str, days: int = WINDOW_DAYS, target_roas: float = 1.30) -> dict:
     key = (account_id, float(target_roas), days)
     cached = _cached(key)
     if cached is not None:
@@ -102,7 +105,7 @@ def compute_max_cpl(db, account_id: str, days: int = 30, target_roas: float = 1.
         return result
 
 
-def warm(db, account_id: str, refresh_after: int = 1800, days: int = 30, target_roas: float = 1.30) -> str:
+def warm(db, account_id: str, refresh_after: int = 1800, days: int = WINDOW_DAYS, target_roas: float = 1.30) -> str:
     """Background refresh for the scheduler. Pulls only when there is no good cached result or it is older
     than `refresh_after` (30 min — two 10-min retry ticks before the 60-min TTL), so page loads don't meet an expired cache. A failed
     pull never replaces a still-valid good result. Returns what it did, for logging. Never raises."""
@@ -152,7 +155,7 @@ def _compute(db, account_id, days, target_roas):
     until = closed_day()
     since = until - timedelta(days=days - 1)
     if not has_revenue_mapping(account_id):
-        # Check before the 30-day Meta pull: without an offer mapping there is no revenue to divide by, so the
+        # Check before the Meta pull: without an offer mapping there is no revenue to divide by, so the
         # pull was wasted on every load and every warm tick (act_708.../act_831..., 2026-11-18).
         raise proposal_service.RevenueUnavailable("no Switchboard offer mapping")
     rows = _pull_rows(account_id, since, until)
@@ -186,7 +189,7 @@ def _compute(db, account_id, days, target_roas):
     for aid, item in adsets.items():
         b = niches[item["niche"]]
         item.update(max_cpl=b["max_cpl"], rpl=b["rpl"], source=b["source"])
-    return {"available": True, "account_id": account_id, "window": {"since": since.isoformat(), "until": until.isoformat()},
+    return {"available": True, "account_id": account_id, "window": {"since": since.isoformat(), "until": until.isoformat(), "days": days},
             "target_roas": target_roas,
             "account": {"rpl": round(account_rpl, 2), "max_cpl": round(account_rpl / target_roas, 2),
                         "leads": total_leads, "revenue": round(total_revenue, 2)},

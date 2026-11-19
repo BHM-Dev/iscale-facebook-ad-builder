@@ -35,9 +35,10 @@ def test_max_cpl_math_window_and_small_sample(monkeypatch):
                  "actions": [{"action_type": "lead", "value": "50"}, {"action_type": "offsite_conversion.fb_pixel_lead", "value": "50"}]},
                 {"adset_id": "small", "adset_name": "Small", "campaign_name": "Florists", "spend": "100",
                  "actions": [{"action_type": "lead", "value": "10"}]}]
-    _setup(monkeypatch, rows, lambda *a: {"big": {"2026-10-06": 1000}, "small": {"2026-10-06": 100}})
+    _setup(monkeypatch, rows, lambda *a: {"big": {"2026-10-29": 1000}, "small": {"2026-10-29": 100}})
     result = service.compute_max_cpl(object(), "act_1")
-    assert seen == {"since": date(2026, 10, 6), "until": date(2026, 11, 4)}   # 30 complete days, ending yesterday PT
+    assert seen == {"since": date(2026, 10, 29), "until": date(2026, 11, 4)}  # 7 complete days, ending yesterday PT
+    assert result["window"]["days"] == 7
     assert result["niches"]["Painting Contractors"]["rpl"] == 20               # 1000 / 50, not / 100
     assert result["adsets"]["big"]["max_cpl"] == 15.38
     assert result["adsets"]["small"]["source"] == "acct_avg"
