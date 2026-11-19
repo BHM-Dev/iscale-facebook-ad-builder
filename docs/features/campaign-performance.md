@@ -68,7 +68,9 @@ API: `backend/app/api/v1/{facebook,auto_pause}.py`; Meta calls: `backend/app/ser
   values fell mid-November after a buyer change (RHO revenue per lead $40.90 on Nov 1-10, $35.81 on Nov 11-17,
   $32.03 on Nov 18), and the 30-day window still priced Max CPL off early-month values. Niches under 40 leads in
   the window use the account average (unchanged rule, so more niches now show "acct avg"). The response carries
-  `window.days`; the cell tooltip reads it. *Unit-tested; production check below once deployed*.
+  `window.days`; the cell tooltip reads it. **Verified in production** (`6c42594`): window Nov 12-18, 7 days; account
+  RPL $35.03 -> Max CPL $26.94 at 1.3x; Car Rental $29.15, Limo $29.43, Auto Dealers $22.24, Trucking $22.85 (niche);
+  Cargo Vans and Painting under 40 leads -> account average.
 - 2026-11-18 Max CPL skips accounts with no Switchboard offer mapping before its 30-day Meta pull, and the warm job
   no longer warms them (act_708427975139366 and act_831886575104941 failed every 10 min, each after a wasted Meta
   pull). *Verified in production*: first warm run after deploy (16:09 UTC) covered only the 3 mapped accounts.
