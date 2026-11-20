@@ -95,7 +95,8 @@ def check_package(svc, db, package_id: str, repair: bool = True) -> Dict[str, An
     from app.services.drive_manifest_validator import validate_handoff_manifest
 
     drive = svc._client()
-    name = drive.files().get(fileId=package_id, fields="name", supportsAllDrives=True).execute().get("name") or package_id
+    folder = drive.files().get(fileId=package_id, fields="name,parents", supportsAllDrives=True).execute() or {}
+    name = folder.get("name") or package_id
     items = svc._list_folder_subtree(package_id)
     media = [i for i in items if svc._is_supported_media(i.get("mimeType") or "", i.get("name") or "")]
     # "joel": things only a change in Drive fixes (the manifest's wording, names, sizes). Everything else in
@@ -162,6 +163,13 @@ def check_package(svc, db, package_id: str, repair: bool = True) -> Dict[str, An
         report["problems"].append(
             f"{len(not_imported)} file(s) not in the library yet (e.g. {', '.join(m['name'] for m in not_imported[:3])})"
         )
+        # Name the one cause no re-sync can fix: the package's top-level Drive folder matches no brand.
+        brand_folder = _unmatched_brand_folder(svc, package_id, folder)
+        if brand_folder:
+            report["problems"].insert(0, (
+                f'no Ad Builder brand matches the Drive folder "{brand_folder}", so these files can\'t be imported. '
+                f"Create a brand with that name (or one ending in ' - {brand_folder}') and the next sync picks them up"
+            ))
 
     # 4. safe repair: parser resolves copy, library rows lack it
     missing_copy = [fid for fid, r in rows.items() if fid in mapped and not _has_copy(r["soft_tags"])]
@@ -189,6 +197,36 @@ def check_package(svc, db, package_id: str, repair: bool = True) -> Dict[str, An
     return report
 
 
+def _unmatched_brand_folder(svc, package_id: str, folder: Dict[str, Any]) -> Optional[str]:
+    """The package's top-level Drive (brand) folder name when no brands row matches it, else None.
+    Best effort: a lookup failure must not hide the rest of the package's report."""
+    try:
+        resolved = svc._resolve_drive_path({"id": package_id, "parents": folder.get("parents") or []})
+        if resolved and resolved.brand_folder and not svc._match_brand_id(resolved.brand_folder):
+            return resolved.brand_folder
+    except Exception as exc:
+        logger.warning("Nightly Drive check: couldn't resolve the brand folder for %s: %s", package_id, exc)
+    return None
+
+
+def _still_missing_packages(db) -> List[str]:
+    """Package folders the hourly Package Health snapshot still shows with files missing from the picker.
+    Checked every night until they clear, not only on the night they changed (a package blocked by a missing
+    brand otherwise drops out of the report after 26h while still unusable)."""
+    try:
+        from app.api.v1.drive_health import STATE_KEY
+        raw = db.execute(text("SELECT value FROM drive_sync_state WHERE key = :k"), {"k": STATE_KEY}).scalar()
+        snapshot = json.loads(raw) if raw else {}
+        if not isinstance(snapshot, dict) or snapshot.get("last_error"):
+            return []
+        return [p["folder_id"] for p in (snapshot.get("all_missing_packages") or [])
+                if isinstance(p, dict) and isinstance(p.get("folder_id"), str) and p["folder_id"] and p.get("missing_count")]
+    except Exception as exc:    # a malformed snapshot must never stop the nightly check itself
+        _rollback(db)
+        logger.warning("Nightly Drive check: couldn't read the package health snapshot: %s", exc)
+        return []
+
+
 def run_nightly_check(db, since_hours: int = 26, max_packages: int = 40, repair: bool = True,
                       now: Optional[datetime] = None) -> Dict[str, Any]:
     from app.services.drive_sync_service import DriveSyncService
@@ -210,14 +248,19 @@ def run_nightly_check(db, since_hours: int = 26, max_packages: int = 40, repair:
             continue
         if pkg:
             packages.setdefault(pkg, None)
+    changed = set(packages)
+    for pkg in _still_missing_packages(db):      # after the changed ones, so they keep priority under the cap
+        packages.setdefault(pkg, None)
     reports = []
     for pkg in list(packages)[:max_packages]:
         try:
-            reports.append(check_package(svc, db, pkg, repair=repair))
+            report = check_package(svc, db, pkg, repair=repair)
         except Exception as exc:
             _rollback(db)   # one shared session: an aborted transaction must not fail every later package
-            reports.append({"package": pkg, "package_id": pkg, "media": 0, "problems": [f"check failed: {str(exc)[:150]}"],
-                            "joel": [], "ours": [f"check failed: {str(exc)[:200]}"], "fixed": None})
+            report = {"package": pkg, "package_id": pkg, "media": 0, "problems": [f"check failed: {str(exc)[:150]}"],
+                      "joel": [], "ours": [f"check failed: {str(exc)[:200]}"], "fixed": None}
+        report["carried_over"] = pkg not in changed
+        reports.append(report)
     return {"since_hours": since_hours, "packages": reports, "skipped_packages": max(0, len(packages) - max_packages),
             "truncated": truncated}
 
@@ -228,12 +271,25 @@ def format_report(result: Dict[str, Any]) -> tuple[str, str, str]:
     fixed = [r for r in reports if r.get("fixed")]
     if not reports:
         return "Drive nightly check", f"no Drive packages changed in the last {result['since_hours']}h.", ""
-    summary = (f"{len(reports)} package(s) changed in the last {result['since_hours']}h — "
-               f"{len(reports) - len(bad)} ready to launch, {len(bad)} need attention"
-               + (f", {len(fixed)} auto-fixed" if fixed else "") + ".")
+    changed = [r for r in reports if not r.get("carried_over")]
+    carried = [r for r in reports if r.get("carried_over")]
+    carried_bad = [r for r in carried if r["problems"]]
+    if changed:
+        changed_bad = [r for r in changed if r["problems"]]
+        summary = (f"{len(changed)} package(s) changed in the last {result['since_hours']}h — "
+                   f"{len(changed) - len(changed_bad)} ready to launch, {len(changed_bad)} need attention")
+    else:
+        summary = f"no Drive packages changed in the last {result['since_hours']}h"
+    if carried_bad:
+        summary += f"; {len(carried_bad)} older package(s) still blocked"
+    cleared = len(carried) - len(carried_bad)
+    if cleared:
+        summary += f"; {cleared} older package(s) now clear"
+    summary += (f", {len(fixed)} auto-fixed" if fixed else "") + "."
     lines = []
     for r in bad:
-        lines.append(f"• {r['package']} ({r['media']} files): " + "; ".join(r["problems"][:3]))
+        tag = "still blocked: " if r.get("carried_over") else ""
+        lines.append(f"• {tag}{r['package']} ({r['media']} files): " + "; ".join(r["problems"][:3]))
     for r in fixed:
         lines.append(f"• fixed {r['package']}: {r['fixed']}")
     if result.get("truncated"):
@@ -248,8 +304,9 @@ JOEL_SLACK_ID = "U08HPNNGHBJ"
 
 
 def format_joel_message(result: Dict[str, Any]) -> Optional[tuple[str, str]]:
-    """Only the fixes Joel can make in Drive; None when there are none (nothing is sent)."""
-    packages = [r for r in result["packages"] if r.get("joel")]
+    """Only the fixes Joel can make in Drive; None when there are none (nothing is sent). Packages carried over
+    from earlier nights are left out: Joel hears about a package the night it changes, never nightly after."""
+    packages = [r for r in result["packages"] if r.get("joel") and not r.get("carried_over")]
     if not packages:
         return None
     summary = (f"{len(packages)} Drive package(s) need a fix before those ads can launch. "

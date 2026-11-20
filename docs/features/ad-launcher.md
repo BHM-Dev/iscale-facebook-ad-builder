@@ -42,6 +42,14 @@ tools remain available as secondary options for teams that need to create new as
 - Codex working brief: [`CODEX_BRIEF_launcher-ux.md`](../../CODEX_BRIEF_launcher-ux.md).
 
 ## Changelog (newest first)
+- 2026-11-20 **Nightly Drive check catches packages that stay blocked.**
+  - **What went wrong:** the HELOC and Splitero Drive folders matched no brand, so 70 files across 7 packages never imported. The check only looked at packages changed in the last 26h, so it called the night clean while they were still unusable.
+  - **What changed:**
+    - Every night it now also re-checks each package the hourly Package Health snapshot still shows with missing files, until it clears. The DM says "N older package(s) still blocked / now clear".
+    - When files can't import because the top-level Drive folder matches no brand, it says so and names the folder.
+    - Joel's DM still covers only packages that changed that night, so a carried-over package never DMs him nightly.
+  - **Same day:** created brands `LoanDepot - HELOC` and `Splitero` (Steve's call) and ran scoped syncs. All 70 files imported, 0 errors.
+  - *Unit-tested* (17 tests; 4 of the new ones fail on the old code). *Dry-run against production data* (no repairs): it reported "6 older package(s) now clear" and 1 still blocked ("Home Equity Ads for Review (Nov 18)": 8 files not in a copy manifest).
 - 2026-11-18 Restyle pass 2 (Joel: "very AI", "chunky flow"): the launcher's orange brand color is now black/neutral
   (selected cards, primary buttons, step list, links, focus rings); amber is kept only where it means a warning
   (budget guard, reconciliation, missing copy, "multiplies budget"). The wizard skips the Account page when it

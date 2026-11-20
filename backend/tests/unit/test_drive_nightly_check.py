@@ -154,3 +154,83 @@ def test_file_our_problems_dedupes_per_package():
     assert n.file_our_problems(db, result) == 1
     row = db.add.call_args[0][0]
     assert row.user_email == "drive-nightly-check" and "'New'" in row.message and row.soft_tags["package_id"] == "p2"
+
+
+class _Resolved:
+    def __init__(self, brand_folder):
+        self.brand_folder = brand_folder
+
+
+def test_unimported_files_name_a_missing_brand(monkeypatch):
+    """HELOC/Splitero, 2026-11-20: files sat outside the picker for days because their Drive folder matched no
+    brand, and the report only said 'not in the library yet'."""
+    _patch_validator(monkeypatch)
+    svc = _Svc(_media("a", "b"), mapped={"a", "b"})
+    svc._resolve_drive_path = lambda meta: _Resolved("HELOC")
+    svc._match_brand_id = lambda name: None
+    r = n.check_package(svc, _db([]), "pkg")
+    assert 'no Ad Builder brand matches the Drive folder "HELOC"' in r["problems"][0]
+    assert r["joel"] == [] and r["ours"] == []      # a brand is Steve's call: not Joel's, not the fix worker's
+
+
+def test_matched_brand_adds_no_brand_problem(monkeypatch):
+    _patch_validator(monkeypatch)
+    svc = _Svc(_media("a"), mapped={"a"})
+    svc._resolve_drive_path = lambda meta: _Resolved("Auto Insurance")
+    svc._match_brand_id = lambda name: "brand-1"
+    r = n.check_package(svc, _db([]), "pkg")
+    assert not any("no Ad Builder brand" in p for p in r["problems"])
+    assert any("not in the library yet" in p for p in r["problems"])
+
+
+def test_packages_still_missing_are_checked_after_they_stop_changing(monkeypatch):
+    import app.services.drive_sync_service as ds
+    monkeypatch.setattr(ds, "DriveSyncService", lambda db: MagicMock())
+    monkeypatch.setattr(n, "_changed_files", lambda svc, since: [])
+    monkeypatch.setattr(n, "_still_missing_packages", lambda db: ["old-pkg"])
+    seen = []
+    monkeypatch.setattr(n, "check_package", lambda svc, db, pkg, repair=True: seen.append(pkg) or
+                        {"package": "HEL-W2-G", "package_id": pkg, "media": 12, "problems": ["12 file(s) not in the library yet"],
+                         "joel": [], "ours": [], "fixed": None})
+    result = n.run_nightly_check(MagicMock())
+    assert seen == ["old-pkg"] and result["packages"][0]["carried_over"] is True
+    headline, summary, detail = n.format_report(result)
+    assert headline.endswith("needs attention")
+    assert "no Drive packages changed" in summary and "1 older package(s) still blocked" in summary
+    assert detail.startswith("• still blocked: HEL-W2-G")
+
+
+def test_changed_package_is_not_double_counted_as_carried_over(monkeypatch):
+    import app.services.drive_sync_service as ds
+    svc = MagicMock()
+    svc._resolve_drive_path.return_value = True
+    svc._find_package_folder.return_value = "pkg"
+    monkeypatch.setattr(ds, "DriveSyncService", lambda db: svc)
+    monkeypatch.setattr(n, "_changed_files", lambda svc, since: [{"id": "f1"}])
+    monkeypatch.setattr(n, "_still_missing_packages", lambda db: ["pkg"])
+    monkeypatch.setattr(n, "check_package", lambda svc, db, pkg, repair=True:
+                        {"package": "P", "package_id": pkg, "media": 1, "problems": [], "joel": [], "ours": [], "fixed": None})
+    result = n.run_nightly_check(MagicMock())
+    assert len(result["packages"]) == 1 and result["packages"][0]["carried_over"] is False
+
+
+def test_still_missing_reads_the_health_snapshot():
+    db = MagicMock()
+    db.execute.return_value.scalar.return_value = json.dumps({"all_missing_packages": [
+        {"folder_id": "a", "missing_count": 3}, {"folder_id": "b", "missing_count": 0}]})
+    assert n._still_missing_packages(db) == ["a"]
+    db.execute.return_value.scalar.return_value = json.dumps({"last_error": "boom", "all_missing_packages": [{"folder_id": "a", "missing_count": 3}]})
+    assert n._still_missing_packages(db) == []
+
+
+def test_joel_is_not_re_messaged_about_carried_over_packages():
+    pkg = {"package": "Home Equity Ads for Review", "media": 8, "problems": ["x"], "joel": ["8 file(s) aren't listed"], "fixed": None}
+    assert n.format_joel_message({"packages": [{**pkg, "carried_over": True}]}) is None
+    assert n.format_joel_message({"packages": [{**pkg, "carried_over": False}]}) is not None
+
+
+def test_malformed_snapshot_never_breaks_the_check():
+    db = MagicMock()
+    for bad in ({"all_missing_packages": 5}, {"all_missing_packages": [{"folder_id": {"x": 1}, "missing_count": 2}]}, [1, 2]):
+        db.execute.return_value.scalar.return_value = json.dumps(bad)
+        assert n._still_missing_packages(db) == []
