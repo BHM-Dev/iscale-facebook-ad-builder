@@ -351,7 +351,7 @@ class DriveSyncService:
         self._copy_packages_refreshed_in_sync: set[str] = set()
 
     @staticmethod
-    def _build_copy_health_summary(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
+    def _build_copy_health_summary(rows: List[Dict[str, Any]], ignored_paths: Optional[List[str]] = None) -> Dict[str, Any]:
         """Return an explicit, package-level view of launchable Drive copy.
 
         This deliberately audits the stored library after a sync rather than
@@ -389,6 +389,10 @@ class DriveSyncService:
                 tags = {}
                 invalid_tag_shape = True
             exclusion_reason = exclusion_reasons.get(tags.get("copy_health_exclusion"))
+            if not exclusion_reason and ignored_paths:
+                from app.services.drive_check_ignore import path_is_ignored
+                if path_is_ignored(folder_path, ignored_paths):
+                    exclusion_reason = "not a launch package (ignored by Steve)"
             if exclusion_reason:
                 # Historical imports are not a current Drive package. Showing
                 # their stale pre-migration path sent users looking for a
@@ -476,7 +480,10 @@ class DriveSyncService:
                 """
             )
         ).mappings().all()
-        health = self._build_copy_health_summary([dict(row) for row in rows])
+        from app.services import drive_check_ignore
+        health = self._build_copy_health_summary(
+            [dict(row) for row in rows], ignored_paths=drive_check_ignore.paths(drive_check_ignore.load(self.db))
+        )
         if health["exception_assets"]:
             logger.warning(
                 "Drive copy health found %s unresolved asset(s) across %s package(s): %s",

@@ -234,3 +234,20 @@ def test_malformed_snapshot_never_breaks_the_check():
     for bad in ({"all_missing_packages": 5}, {"all_missing_packages": [{"folder_id": {"x": 1}, "missing_count": 2}]}, [1, 2]):
         db.execute.return_value.scalar.return_value = json.dumps(bad)
         assert n._still_missing_packages(db) == []
+
+
+def test_ignored_packages_are_never_checked(monkeypatch):
+    import app.services.drive_sync_service as ds
+    import app.services.drive_check_ignore as ig
+    svc = MagicMock()
+    svc._resolve_drive_path.return_value = True
+    svc._find_package_folder.return_value = "review-pkg"
+    monkeypatch.setattr(ds, "DriveSyncService", lambda db: svc)
+    monkeypatch.setattr(n, "_changed_files", lambda svc, since: [{"id": "f1"}])
+    monkeypatch.setattr(n, "_still_missing_packages", lambda db: ["review-pkg", "real-pkg"])
+    monkeypatch.setattr(ig, "load", lambda db: [{"folder_id": "review-pkg", "path": "X/Review"}])
+    seen = []
+    monkeypatch.setattr(n, "check_package", lambda svc, db, pkg, repair=True: seen.append(pkg) or
+                        {"package": pkg, "package_id": pkg, "media": 1, "problems": [], "joel": [], "ours": [], "fixed": None})
+    n.run_nightly_check(MagicMock())
+    assert seen == ["real-pkg"]

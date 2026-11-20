@@ -42,6 +42,11 @@ tools remain available as secondary options for teams that need to create new as
 - Codex working brief: [`CODEX_BRIEF_launcher-ux.md`](../../CODEX_BRIEF_launcher-ux.md).
 
 ## Changelog (newest first)
+- 2026-11-20 **Drive check ignore list** (`drive_sync_state` key `check_ignored_packages`, `services/drive_check_ignore.py`).
+  - **What it does:** the nightly check skips the listed packages, and copy health shows them as excluded ("not a launch package"), not as problems. Their files still sync and can still be picked.
+  - **Entry format:** `{folder_id, path, why}`. `folder_id` is used by the nightly check, `path` (the `drive_assets.folder_path`) by copy health.
+  - **First entry:** Splitero's "Home Equity Ads for Review (Nov 18)" (Steve's call).
+  - *Unit-tested*. The read runs in a savepoint, so a failure can't roll back a sync's uncommitted work.
 - 2026-11-20 **Nightly Drive check catches packages that stay blocked.**
   - **What went wrong:** the HELOC and Splitero Drive folders matched no brand, so 70 files across 7 packages never imported. The check only looked at packages changed in the last 26h, so it called the night clean while they were still unusable.
   - **What changed:**

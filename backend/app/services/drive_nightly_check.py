@@ -251,6 +251,10 @@ def run_nightly_check(db, since_hours: int = 26, max_packages: int = 40, repair:
     changed = set(packages)
     for pkg in _still_missing_packages(db):      # after the changed ones, so they keep priority under the cap
         packages.setdefault(pkg, None)
+    from app.services import drive_check_ignore
+    ignored = drive_check_ignore.folder_ids(drive_check_ignore.load(db))   # e.g. a review folder (Steve's call)
+    for pkg in ignored:
+        packages.pop(pkg, None)
     reports = []
     for pkg in list(packages)[:max_packages]:
         try:
